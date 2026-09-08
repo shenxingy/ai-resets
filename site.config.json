@@ -1,0 +1,6 @@
+{
+  "_comment": "Site identity. A fork edits this one file; nothing else carries the canonical URL or the maintainer's name. Kept tracked, not in the environment, because build.py, check_site.py and the tests all need the same answer and the cron line supplies only AI_RESETS_DEPLOY_TARGET.",
+  "public_url": "https://resets.alexshen.dev/",
+  "maintainer_name": "Alex Shen",
+  "maintainer_url": "https://alexshen.dev/"
+}

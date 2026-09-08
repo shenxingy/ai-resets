@@ -1,0 +1,650 @@
+{
+ "feed": [
+  {
+   "post": {
+    "uri": "at://did:plc:2zjlvhg4ytew66hjklepesjw/app.bsky.feed.post/4o4qe7fecmu22",
+    "cid": "bafyreice75cu3bap2pcd3fu5m5ehzpcrapme4legckvo5izo6gwc3wi2ve",
+    "author": {
+     "did": "did:plc:2zjlvhg4ytew66hjklepesjw",
+     "handle": "trq212-mirr.selfhosted.social",
+     "displayName": "Thariq is on vacation [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:2zjlvhg4ytew66hjklepesjw/bafkreihojjr6txgqyxtb5yfj6acnrodvj3u6cnst5wdci6srwj4p2tjy34",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:45:51.544Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-03T23:19:57.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.record",
+      "record": {
+       "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+       "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+      }
+     },
+     "text": "We’re working on making Claude Code way more hackable, give us feedback!"
+    },
+    "embed": {
+     "record": {
+      "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22",
+      "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+      "author": {
+       "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+       "handle": "claudedevs-mirr.selfhosted.social",
+       "displayName": "ClaudeDevs [UNOFFICIAL]",
+       "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+       "associated": {
+        "chat": {
+         "allowIncoming": "all"
+        },
+        "activitySubscription": {
+         "allowSubscriptions": "followers"
+        }
+       },
+       "labels": [],
+       "createdAt": "2026-04-17T03:07:06.647Z"
+      },
+      "value": {
+       "$type": "app.bsky.feed.post",
+       "createdAt": "2026-09-03T18:01:25.000Z",
+       "embed": {
+        "$type": "app.bsky.embed.video",
+        "aspectRatio": {
+         "height": 16,
+         "width": 9
+        },
+        "video": {
+         "$type": "blob",
+         "ref": {
+          "$link": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4"
+         },
+         "mimeType": "video/mp4",
+         "size": 13022381
+        }
+       },
+       "text": "We're exploring a new way to let you extend and customize Claude Code: Function Hooks.\n\nHere's a couple videos showing what you'd be able to do. It hasn't shipped yet, we'd love feedback on this on our GitHub issue."
+      },
+      "labels": [],
+      "likeCount": 0,
+      "replyCount": 2,
+      "repostCount": 0,
+      "quoteCount": 2,
+      "indexedAt": "2026-09-03T20:05:47.169Z",
+      "embeds": [
+       {
+        "cid": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4",
+        "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/playlist.m3u8",
+        "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/thumbnail.jpg",
+        "aspectRatio": {
+         "height": 16,
+         "width": 9
+        },
+        "$type": "app.bsky.embed.video#view"
+       }
+      ],
+      "$type": "app.bsky.embed.record#viewRecord"
+     },
+     "$type": "app.bsky.embed.record#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-04T00:19:10.575Z",
+    "labels": []
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:adwrbldwce4z3ibejbatqmny/app.bsky.feed.post/3afffcuycrq22",
+    "cid": "bafyreifd42nr74obgmg4j2m3jku52mqcn6jqopfhvqnd6zce3y2gvgtcwu",
+    "author": {
+     "did": "did:plc:adwrbldwce4z3ibejbatqmny",
+     "handle": "trq212-mir-rt.selfhosted.social",
+     "displayName": "Retweeted by Thariq is on vacation [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:adwrbldwce4z3ibejbatqmny/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [
+      {
+       "cts": "2026-07-01T06:17:44.462Z",
+       "src": "did:plc:ar7c4by46qjdydhdevvrndac",
+       "uri": "did:plc:adwrbldwce4z3ibejbatqmny",
+       "val": "spam",
+       "ver": 1
+      }
+     ],
+     "createdAt": "2026-04-04T16:46:17.647Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-01T18:03:14.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.video",
+      "aspectRatio": {
+       "height": 1,
+       "width": 1
+      },
+      "video": {
+       "$type": "blob",
+       "ref": {
+        "$link": "bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi"
+       },
+       "mimeType": "video/mp4",
+       "size": 9793429
+      }
+     },
+     "facets": [
+      {
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://x.com/claudeai"
+        }
+       ],
+       "index": {
+        "byteEnd": 12,
+        "byteStart": 3
+       }
+      }
+     ],
+     "text": "RT @claudeai: We’re introducing Claude Fable 5.1 and Claude Mythos 5.1.\n\nThey're the world’s most advanced models for coding and knowledge work."
+    },
+    "embed": {
+     "cid": "bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi",
+     "playlist": "https://video.bsky.app/watch/did%3Aplc%3Aadwrbldwce4z3ibejbatqmny/bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi/playlist.m3u8",
+     "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Aadwrbldwce4z3ibejbatqmny/bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi/thumbnail.jpg",
+     "aspectRatio": {
+      "height": 1,
+      "width": 1
+     },
+     "$type": "app.bsky.embed.video#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 1,
+    "likeCount": 0,
+    "quoteCount": 1,
+    "indexedAt": "2026-09-02T00:19:30.500Z",
+    "labels": []
+   },
+   "reason": {
+    "by": {
+     "did": "did:plc:2zjlvhg4ytew66hjklepesjw",
+     "handle": "trq212-mirr.selfhosted.social",
+     "displayName": "Thariq is on vacation [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:2zjlvhg4ytew66hjklepesjw/bafkreihojjr6txgqyxtb5yfj6acnrodvj3u6cnst5wdci6srwj4p2tjy34",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:45:51.544Z"
+    },
+    "uri": "at://did:plc:2zjlvhg4ytew66hjklepesjw/app.bsky.feed.repost/3f3es4fhsew22",
+    "cid": "bafyreiep6mtvgauvnalyvxn3h7j2c4p2u6s3akfrbxioaakym37sv7cvtu",
+    "indexedAt": "2026-09-02T00:20:11.407Z",
+    "$type": "app.bsky.feed.defs#reasonRepost"
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:2zjlvhg4ytew66hjklepesjw/app.bsky.feed.post/3fwjn6mt2oo22",
+    "cid": "bafyreidfuarxcde7bg4mgo5e7ex3dbm37ixt7ccy3xnoqi6ga53srwwo54",
+    "author": {
+     "did": "did:plc:2zjlvhg4ytew66hjklepesjw",
+     "handle": "trq212-mirr.selfhosted.social",
+     "displayName": "Thariq is on vacation [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:2zjlvhg4ytew66hjklepesjw/bafkreihojjr6txgqyxtb5yfj6acnrodvj3u6cnst5wdci6srwj4p2tjy34",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:45:51.544Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-02T00:30:11.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.record",
+      "record": {
+       "cid": "bafyreifd42nr74obgmg4j2m3jku52mqcn6jqopfhvqnd6zce3y2gvgtcwu",
+       "uri": "at://did:plc:adwrbldwce4z3ibejbatqmny/app.bsky.feed.post/3afffcuycrq22"
+      }
+     },
+     "text": "it’s a very good model, I spent a lot of time diving into it- longer write up coming \n\nbut try it on lower effort for tasks that need less verification or have fewer edge cases, switching effort no longer breaks prompt cache as well"
+    },
+    "embed": {
+     "record": {
+      "uri": "at://did:plc:adwrbldwce4z3ibejbatqmny/app.bsky.feed.post/3afffcuycrq22",
+      "cid": "bafyreifd42nr74obgmg4j2m3jku52mqcn6jqopfhvqnd6zce3y2gvgtcwu",
+      "author": {
+       "did": "did:plc:adwrbldwce4z3ibejbatqmny",
+       "handle": "trq212-mir-rt.selfhosted.social",
+       "displayName": "Retweeted by Thariq is on vacation [UNOFFICIAL]",
+       "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:adwrbldwce4z3ibejbatqmny/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+       "associated": {
+        "chat": {
+         "allowIncoming": "all"
+        },
+        "activitySubscription": {
+         "allowSubscriptions": "followers"
+        }
+       },
+       "labels": [
+        {
+         "cts": "2026-07-01T06:17:44.462Z",
+         "src": "did:plc:ar7c4by46qjdydhdevvrndac",
+         "uri": "did:plc:adwrbldwce4z3ibejbatqmny",
+         "val": "spam",
+         "ver": 1
+        }
+       ],
+       "createdAt": "2026-04-04T16:46:17.647Z"
+      },
+      "value": {
+       "$type": "app.bsky.feed.post",
+       "createdAt": "2026-09-01T18:03:14.000Z",
+       "embed": {
+        "$type": "app.bsky.embed.video",
+        "aspectRatio": {
+         "height": 1,
+         "width": 1
+        },
+        "video": {
+         "$type": "blob",
+         "ref": {
+          "$link": "bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi"
+         },
+         "mimeType": "video/mp4",
+         "size": 9793429
+        }
+       },
+       "facets": [
+        {
+         "features": [
+          {
+           "$type": "app.bsky.richtext.facet#link",
+           "uri": "https://x.com/claudeai"
+          }
+         ],
+         "index": {
+          "byteEnd": 12,
+          "byteStart": 3
+         }
+        }
+       ],
+       "text": "RT @claudeai: We’re introducing Claude Fable 5.1 and Claude Mythos 5.1.\n\nThey're the world’s most advanced models for coding and knowledge work."
+      },
+      "labels": [],
+      "likeCount": 0,
+      "replyCount": 0,
+      "repostCount": 1,
+      "quoteCount": 1,
+      "indexedAt": "2026-09-02T00:19:30.500Z",
+      "embeds": [
+       {
+        "cid": "bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi",
+        "playlist": "https://video.bsky.app/watch/did%3Aplc%3Aadwrbldwce4z3ibejbatqmny/bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi/playlist.m3u8",
+        "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Aadwrbldwce4z3ibejbatqmny/bafkreicoqzoxkfyap32ja6rk6ag6w4ki5tfho3y4vn6t2hprdxbteo3wfi/thumbnail.jpg",
+        "aspectRatio": {
+         "height": 1,
+         "width": 1
+        },
+        "$type": "app.bsky.embed.video#view"
+       }
+      ],
+      "$type": "app.bsky.embed.record#viewRecord"
+     },
+     "$type": "app.bsky.embed.record#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 2,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-02T01:19:15.710Z",
+    "labels": []
+   },
+   "opThreadPostIndex": 1,
+   "opThreadPostCount": 2
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:2zjlvhg4ytew66hjklepesjw/app.bsky.feed.post/4o3x72nd27622",
+    "cid": "bafyreibuswalhracvcp3fqfqgfyyvfe4fmubxbaq6e34laki6sj5f6p4wq",
+    "author": {
+     "did": "did:plc:2zjlvhg4ytew66hjklepesjw",
+     "handle": "trq212-mirr.selfhosted.social",
+     "displayName": "Thariq is on vacation [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:2zjlvhg4ytew66hjklepesjw/bafkreihojjr6txgqyxtb5yfj6acnrodvj3u6cnst5wdci6srwj4p2tjy34",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:45:51.544Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-03T23:18:14.000Z",
+     "reply": {
+      "parent": {
+       "cid": "bafyreibhckmeq2lyhm2wwevkooerr4uzs4au27gz4b4dmi5p3xhg23vare",
+       "uri": "at://did:plc:adwrbldwce4z3ibejbatqmny/app.bsky.feed.post/4jpefgewcpm22"
+      },
+      "root": {
+       "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+       "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+      }
+     },
+     "text": "We will!"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-03T23:20:12.756Z",
+    "labels": []
+   },
+   "reply": {
+    "root": {
+     "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22",
+     "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+     "author": {
+      "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+      "handle": "claudedevs-mirr.selfhosted.social",
+      "displayName": "ClaudeDevs [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-04-17T03:07:06.647Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-03T18:01:25.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.video",
+       "aspectRatio": {
+        "height": 16,
+        "width": 9
+       },
+       "video": {
+        "$type": "blob",
+        "ref": {
+         "$link": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4"
+        },
+        "mimeType": "video/mp4",
+        "size": 13022381
+       }
+      },
+      "text": "We're exploring a new way to let you extend and customize Claude Code: Function Hooks.\n\nHere's a couple videos showing what you'd be able to do. It hasn't shipped yet, we'd love feedback on this on our GitHub issue."
+     },
+     "embed": {
+      "cid": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4",
+      "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/playlist.m3u8",
+      "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/thumbnail.jpg",
+      "aspectRatio": {
+       "height": 16,
+       "width": 9
+      },
+      "$type": "app.bsky.embed.video#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 2,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 2,
+     "indexedAt": "2026-09-03T20:05:47.169Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "parent": {
+     "uri": "at://did:plc:adwrbldwce4z3ibejbatqmny/app.bsky.feed.post/4jpefgewcpm22",
+     "cid": "bafyreibhckmeq2lyhm2wwevkooerr4uzs4au27gz4b4dmi5p3xhg23vare",
+     "author": {
+      "did": "did:plc:adwrbldwce4z3ibejbatqmny",
+      "handle": "trq212-mir-rt.selfhosted.social",
+      "displayName": "Retweeted by Thariq is on vacation [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:adwrbldwce4z3ibejbatqmny/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [
+       {
+        "cts": "2026-07-01T06:17:44.462Z",
+        "src": "did:plc:ar7c4by46qjdydhdevvrndac",
+        "uri": "did:plc:adwrbldwce4z3ibejbatqmny",
+        "val": "spam",
+        "ver": 1
+       }
+      ],
+      "createdAt": "2026-04-04T16:46:17.647Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-03T18:11:07.000Z",
+      "facets": [
+       {
+        "features": [
+         {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://x.com/dmitriybuilds"
+         }
+        ],
+        "index": {
+         "byteEnd": 17,
+         "byteStart": 3
+        }
+       },
+       {
+        "features": [
+         {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://AGENTS.md"
+         }
+        ],
+        "index": {
+         "byteEnd": 59,
+         "byteStart": 50
+        }
+       }
+      ],
+      "reply": {
+       "parent": {
+        "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+        "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+       },
+       "root": {
+        "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+        "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+       }
+      },
+      "text": "RT @dmitriybuilds: Can't you just add support for AGENTS.md?"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 1,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-03T23:19:14.464Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "grandparentAuthor": {
+     "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+     "handle": "claudedevs-mirr.selfhosted.social",
+     "displayName": "ClaudeDevs [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-17T03:07:06.647Z"
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:adwrbldwce4z3ibejbatqmny/app.bsky.feed.post/a6v7t35f2c222",
+    "cid": "bafyreiba7euog5ps7zm3np55245xaiukfju2i4zedoxbhciymkozwkk3gm",
+    "author": {
+     "did": "did:plc:adwrbldwce4z3ibejbatqmny",
+     "handle": "trq212-mir-rt.selfhosted.social",
+     "displayName": "Retweeted by Thariq is on vacation [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:adwrbldwce4z3ibejbatqmny/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [
+      {
+       "cts": "2026-07-01T06:17:44.462Z",
+       "src": "did:plc:ar7c4by46qjdydhdevvrndac",
+       "uri": "did:plc:adwrbldwce4z3ibejbatqmny",
+       "val": "spam",
+       "ver": 1
+      }
+     ],
+     "createdAt": "2026-04-04T16:46:17.647Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-08-28T00:27:07.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.external",
+      "external": {
+       "description": "How Anthropic runs AI incident response for CI/CD: an engineer on our Continuous Integration team walks through the Claude Tag agent that detects, triages, and resolves CI failures.",
+       "thumb": {
+        "$type": "blob",
+        "ref": {
+         "$link": "bafkreifsabpepv4vjoxpuw6753mucszttv2dtw6oqzlm5jkqzvlwxh6rxq"
+        },
+        "mimeType": "image/jpeg",
+        "size": 44775
+       },
+       "title": "How Claude Tag serves as Anthropic’s first responder for CI/CD failures | Claude by Anthropic",
+       "uri": "https://claude.com/blog/ai-ci-cd-on-call"
+      }
+     },
+     "facets": [
+      {
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://x.com/noahzweben"
+        }
+       ],
+       "index": {
+        "byteEnd": 14,
+        "byteStart": 3
+       }
+      },
+      {
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://claude.com/blog/ai-ci-cd-on-call"
+        }
+       ],
+       "index": {
+        "byteEnd": 265,
+        "byteStart": 225
+       }
+      }
+     ],
+     "text": "RT @noahzweben: The most popular use case for Claude Tag by far -- on-call.\n Learn about how we drive Anthropic's on-call with Tag and set it up yourself so you don't get woken up by an alert at 3am that Claude could solve.\n\nhttps://claude.com/blog/ai-ci-cd-on-call"
+    },
+    "embed": {
+     "external": {
+      "uri": "https://claude.com/blog/ai-ci-cd-on-call",
+      "title": "How Claude Tag serves as Anthropic’s first responder for CI/CD failures | Claude by Anthropic",
+      "description": "How Anthropic runs AI incident response for CI/CD: an engineer on our Continuous Integration team walks through the Claude Tag agent that detects, triages, and resolves CI failures.",
+      "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:adwrbldwce4z3ibejbatqmny/bafkreifsabpepv4vjoxpuw6753mucszttv2dtw6oqzlm5jkqzvlwxh6rxq"
+     },
+     "$type": "app.bsky.embed.external#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 1,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-08-28T02:19:17.164Z",
+    "labels": []
+   },
+   "reason": {
+    "by": {
+     "did": "did:plc:2zjlvhg4ytew66hjklepesjw",
+     "handle": "trq212-mirr.selfhosted.social",
+     "displayName": "Thariq is on vacation [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:2zjlvhg4ytew66hjklepesjw/bafkreihojjr6txgqyxtb5yfj6acnrodvj3u6cnst5wdci6srwj4p2tjy34",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:45:51.544Z"
+    },
+    "uri": "at://did:plc:2zjlvhg4ytew66hjklepesjw/app.bsky.feed.repost/a7wpnlvdcws22",
+    "cid": "bafyreigh5jv3asnu53ekobjisne6avmiiagdjegwnx7f73ujiuc5cybeeu",
+    "indexedAt": "2026-08-28T02:20:15.869Z",
+    "$type": "app.bsky.feed.defs#reasonRepost"
+   }
+  }
+ ],
+ "cursor": "2026-08-27T02:40:30Z"
+}

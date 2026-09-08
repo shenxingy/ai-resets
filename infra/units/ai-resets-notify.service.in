@@ -1,0 +1,37 @@
+[Unit]
+Description=Send AI Reset Watch notifications for newly discovered events
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__AI_RESETS_USER__
+Group=__AI_RESETS_GROUP__
+WorkingDirectory=__AI_RESETS_REPO__
+LoadCredentialEncrypted=RESEND_API_KEY
+LoadCredentialEncrypted=SUBSCRIPTION_SECRET
+# Operator settings that are not secrets — OWNER_EMAIL above all, which is
+# where "[ai-resets alert]" messages go when the probe goes blind, the publish
+# pipeline stalls, or a batch of announcements is held unsent. The leading `-`
+# makes the file optional: without it the notifier still runs and prints its
+# alerts to the journal instead of mailing them.
+EnvironmentFile=-/etc/ai-resets/notify.env
+# The sending identity. Required now that no address is compiled in, so a
+# deployment can never mail as somebody else's domain. Optional-loaded (`-`)
+# so a missing file does not stop the unit; the script then says what is absent.
+EnvironmentFile=-/etc/ai-resets/service.env
+ExecStart=/usr/bin/python3 __AI_RESETS_REPO__/scripts/subscriptions.py notify
+StateDirectory=ai-resets
+StateDirectoryMode=0700
+UMask=0077
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=read-only
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true

@@ -1,0 +1,27 @@
+{
+  "vendor": "google",
+  "source": {
+    "name": "Google blog / Google Developers blog",
+    "url": "https://blog.google/",
+    "note": "Google publishes no reset feed, so this column is hand-curated. This note used to say Google has no recurring reset mechanism; that has been wrong since 2025-12-05. Google has forced Antigravity-wide usage resets on 2026-05-21 (twice), 2026-05-23, 2026-06-02 and 2026-07-21. Those five are absent from the rows below because no post id has been verified for them and this project does not publish an event it cannot link to; what is listed here is documented policy changes only."
+  },
+  "fetched_at": "2026-07-25T20:00:00Z",
+  "events": [
+    {
+      "id": "google-2026-01-07-higher-limits",
+      "text": "Google AI Pro and Ultra subscribers now get Gemini CLI and Gemini Code Assist with higher daily model request limits.",
+      "url": "https://blog.google/innovation-and-ai/technology/developers-tools/gemini-cli-code-assist-higher-limits/",
+      "announced_at": "2026-01-07T00:00:00Z",
+      "kind": "increase",
+      "confidence": "high"
+    },
+    {
+      "id": "google-2026-06-18-antigravity-transition",
+      "text": "Gemini CLI and Gemini Code Assist IDE extensions stop serving requests for individuals / AI Pro / AI Ultra; free-tier access is replaced by Antigravity CLI at a much lower daily request ceiling (~20/day vs 1,000/day).",
+      "url": "https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/",
+      "announced_at": "2026-06-18T00:00:00Z",
+      "kind": "decrease",
+      "confidence": "high"
+    }
+  ]
+}

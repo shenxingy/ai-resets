@@ -1,0 +1,13 @@
+site/data.json
+site/index.html
+site/analytics.js
+site/sitemap.xml
+data/openai.json
+publish.log
+__pycache__/
+*.pyc
+.claude/
+data/observed/
+data/hints/
+data/posts.json
+docs/robustness-plan.md

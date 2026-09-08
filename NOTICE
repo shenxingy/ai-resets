@@ -1,0 +1,29 @@
+AI Reset Watch
+Copyright (c) 2026 Alex Shen
+
+The MIT licence in LICENSE covers the CODE in this repository. It does not
+cover the DATA, and the distinction matters here because the two live side by
+side.
+
+Tracked announcements (`data/*.json`)
+-------------------------------------
+Each event records a public announcement made by someone else: a post by a
+vendor account or an employee, a changelog entry, a status page note. Rows
+carry the announcement's own text, its author, its timestamp and a link back to
+the original.
+
+That text is quoted, not licensed. Copyright in each announcement stays with
+whoever wrote it. It is reproduced here in short excerpts, attributed and
+linked to the source, so that a factual record of when limits moved can be
+checked against its origin. Anyone reusing this dataset is responsible for
+their own basis for quoting the underlying posts.
+
+Requests to correct or remove a specific quoted announcement are welcome
+through the contact route on the maintainer's site.
+
+Own-account measurements (`data/observed/`, when present)
+---------------------------------------------------------
+Readings of the maintainer's own subscription quota, taken from vendor APIs
+with that account's own credentials. These are original observations and are
+covered by the MIT licence with the rest of the project. They are not vendor
+telemetry and say nothing about any other account.

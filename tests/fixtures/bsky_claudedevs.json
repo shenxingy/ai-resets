@@ -1,0 +1,551 @@
+{
+ "feed": [
+  {
+   "post": {
+    "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/3au5by5g2o622",
+    "cid": "bafyreibircgzjnrz5euylrvm3h4y566i2z5pxadhterhzf6bijjdmkinou",
+    "author": {
+     "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+     "handle": "claudedevs-mirr.selfhosted.social",
+     "displayName": "ClaudeDevs [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-17T03:07:06.647Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-01T18:35:27.000Z",
+     "text": "With Fable 5.1 out today, we've also reset 5-hour and weekly limits for all users."
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 1,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-01T20:05:19.208Z",
+    "labels": []
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22",
+    "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+    "author": {
+     "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+     "handle": "claudedevs-mirr.selfhosted.social",
+     "displayName": "ClaudeDevs [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-17T03:07:06.647Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-03T18:01:25.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.video",
+      "aspectRatio": {
+       "height": 16,
+       "width": 9
+      },
+      "video": {
+       "$type": "blob",
+       "ref": {
+        "$link": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4"
+       },
+       "mimeType": "video/mp4",
+       "size": 13022381
+      }
+     },
+     "text": "We're exploring a new way to let you extend and customize Claude Code: Function Hooks.\n\nHere's a couple videos showing what you'd be able to do. It hasn't shipped yet, we'd love feedback on this on our GitHub issue."
+    },
+    "embed": {
+     "cid": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4",
+     "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/playlist.m3u8",
+     "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/thumbnail.jpg",
+     "aspectRatio": {
+      "height": 16,
+      "width": 9
+     },
+     "$type": "app.bsky.embed.video#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 2,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 2,
+    "indexedAt": "2026-09-03T20:05:47.169Z",
+    "labels": []
+   },
+   "opThreadPostIndex": 1,
+   "opThreadPostCount": 2
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4nz746ez2w623",
+    "cid": "bafyreiewkljjf3tlz2vqqhwxdgbjwhiruhtoi2d3ou3x5n2h7k55hgyg6a",
+    "author": {
+     "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+     "handle": "claudedevs-mirr.selfhosted.social",
+     "displayName": "ClaudeDevs [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-17T03:07:06.647Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-03T23:12:14.000Z",
+     "facets": [
+      {
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://platform.claude.com/docs/en/cli-sdks-libraries/cli/apply"
+        }
+       ],
+       "index": {
+        "byteEnd": 70,
+        "byteStart": 6
+       }
+      }
+     ],
+     "reply": {
+      "parent": {
+       "cid": "bafyreiceamcmdw2h6n7nfoxutcclf3xr75s36wd4crq2v5x5tq24ih2gmq",
+       "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4nz746ez2w622"
+      },
+      "root": {
+       "cid": "bafyreiceamcmdw2h6n7nfoxutcclf3xr75s36wd4crq2v5x5tq24ih2gmq",
+       "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4nz746ez2w622"
+      }
+     },
+     "text": "Docs: https://platform.claude.com/docs/en/cli-sdks-libraries/cli/apply"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-04T00:05:32.099Z",
+    "labels": []
+   },
+   "reply": {
+    "root": {
+     "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4nz746ez2w622",
+     "cid": "bafyreiceamcmdw2h6n7nfoxutcclf3xr75s36wd4crq2v5x5tq24ih2gmq",
+     "author": {
+      "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+      "handle": "claudedevs-mirr.selfhosted.social",
+      "displayName": "ClaudeDevs [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-04-17T03:07:06.647Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-03T23:12:14.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.video",
+       "aspectRatio": {
+        "height": 9,
+        "width": 16
+       },
+       "video": {
+        "$type": "blob",
+        "ref": {
+         "$link": "bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe"
+        },
+        "mimeType": "video/mp4",
+        "size": 5708015
+       }
+      },
+      "text": "We've added `ant apply` to the ant CLI. \n\nNow you can declare Claude Managed Agent environments, agents, skills, memory stores, and deployments as files in your repository and keep the API's resources in sync with them using `ant apply`."
+     },
+     "embed": {
+      "cid": "bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe",
+      "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe/playlist.m3u8",
+      "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe/thumbnail.jpg",
+      "aspectRatio": {
+       "height": 9,
+       "width": 16
+      },
+      "$type": "app.bsky.embed.video#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 1,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-04T00:05:32.066Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "parent": {
+     "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4nz746ez2w622",
+     "cid": "bafyreiceamcmdw2h6n7nfoxutcclf3xr75s36wd4crq2v5x5tq24ih2gmq",
+     "author": {
+      "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+      "handle": "claudedevs-mirr.selfhosted.social",
+      "displayName": "ClaudeDevs [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-04-17T03:07:06.647Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-03T23:12:14.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.video",
+       "aspectRatio": {
+        "height": 9,
+        "width": 16
+       },
+       "video": {
+        "$type": "blob",
+        "ref": {
+         "$link": "bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe"
+        },
+        "mimeType": "video/mp4",
+        "size": 5708015
+       }
+      },
+      "text": "We've added `ant apply` to the ant CLI. \n\nNow you can declare Claude Managed Agent environments, agents, skills, memory stores, and deployments as files in your repository and keep the API's resources in sync with them using `ant apply`."
+     },
+     "embed": {
+      "cid": "bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe",
+      "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe/playlist.m3u8",
+      "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreigyr6jnhdatdm5usbk4wcssxuwtzzzelu6gexmkstvad6kibijsqe/thumbnail.jpg",
+      "aspectRatio": {
+       "height": 9,
+       "width": 16
+      },
+      "$type": "app.bsky.embed.video#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 1,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-04T00:05:32.066Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    }
+   },
+   "opThreadPostIndex": 2,
+   "opThreadPostCount": 2
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwgp5ekja22",
+    "cid": "bafyreifjayru7ng3kskpay6agonsagfnub2oqwmp225qgtq6kyhvp7mknu",
+    "author": {
+     "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+     "handle": "claudedevs-mirr.selfhosted.social",
+     "displayName": "ClaudeDevs [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-17T03:07:06.647Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-03T18:01:26.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.external",
+      "external": {
+       "description": "Hi folks! ✨ AI;DR: Function Hooks let you modify CC very deeply, while still being safe through side-effect tracking over a parameterized $ object, and while composing neatly using a registration-o...",
+       "thumb": {
+        "$type": "blob",
+        "ref": {
+         "$link": "bafkreieowt5mo6bo7z46eegigbz3sjveljfget63fycurvnemybw7kj4im"
+        },
+        "mimeType": "image/jpeg",
+        "size": 49738
+       },
+       "title": "Function Hooks - make plugins 10x more powerful · Issue #91870 · anthropics/claude-code",
+       "uri": "https://github.com/anthropics/claude-code/issues/91870"
+      }
+     },
+     "facets": [
+      {
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://github.com/anthropics/claude-code/issues/91870"
+        }
+       ],
+       "index": {
+        "byteEnd": 54,
+        "byteStart": 0
+       }
+      }
+     ],
+     "reply": {
+      "parent": {
+       "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+       "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+      },
+      "root": {
+       "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+       "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+      }
+     },
+     "text": "https://github.com/anthropics/claude-code/issues/91870"
+    },
+    "embed": {
+     "external": {
+      "uri": "https://github.com/anthropics/claude-code/issues/91870",
+      "title": "Function Hooks - make plugins 10x more powerful · Issue #91870 · anthropics/claude-code",
+      "description": "Hi folks! ✨ AI;DR: Function Hooks let you modify CC very deeply, while still being safe through side-effect tracking over a parameterized $ object, and while composing neatly using a registration-o...",
+      "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreieowt5mo6bo7z46eegigbz3sjveljfget63fycurvnemybw7kj4im"
+     },
+     "$type": "app.bsky.embed.external#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-03T20:06:16.270Z",
+    "labels": []
+   },
+   "reply": {
+    "root": {
+     "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22",
+     "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+     "author": {
+      "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+      "handle": "claudedevs-mirr.selfhosted.social",
+      "displayName": "ClaudeDevs [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-04-17T03:07:06.647Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-03T18:01:25.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.video",
+       "aspectRatio": {
+        "height": 16,
+        "width": 9
+       },
+       "video": {
+        "$type": "blob",
+        "ref": {
+         "$link": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4"
+        },
+        "mimeType": "video/mp4",
+        "size": 13022381
+       }
+      },
+      "text": "We're exploring a new way to let you extend and customize Claude Code: Function Hooks.\n\nHere's a couple videos showing what you'd be able to do. It hasn't shipped yet, we'd love feedback on this on our GitHub issue."
+     },
+     "embed": {
+      "cid": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4",
+      "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/playlist.m3u8",
+      "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/thumbnail.jpg",
+      "aspectRatio": {
+       "height": 16,
+       "width": 9
+      },
+      "$type": "app.bsky.embed.video#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 2,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 2,
+     "indexedAt": "2026-09-03T20:05:47.169Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "parent": {
+     "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22",
+     "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+     "author": {
+      "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+      "handle": "claudedevs-mirr.selfhosted.social",
+      "displayName": "ClaudeDevs [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-04-17T03:07:06.647Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-03T18:01:25.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.video",
+       "aspectRatio": {
+        "height": 16,
+        "width": 9
+       },
+       "video": {
+        "$type": "blob",
+        "ref": {
+         "$link": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4"
+        },
+        "mimeType": "video/mp4",
+        "size": 13022381
+       }
+      },
+      "text": "We're exploring a new way to let you extend and customize Claude Code: Function Hooks.\n\nHere's a couple videos showing what you'd be able to do. It hasn't shipped yet, we'd love feedback on this on our GitHub issue."
+     },
+     "embed": {
+      "cid": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4",
+      "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/playlist.m3u8",
+      "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/thumbnail.jpg",
+      "aspectRatio": {
+       "height": 16,
+       "width": 9
+      },
+      "$type": "app.bsky.embed.video#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 2,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 2,
+     "indexedAt": "2026-09-03T20:05:47.169Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    }
+   },
+   "opThreadPostIndex": 2,
+   "opThreadPostCount": 2
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/3vvprsfjcvk22",
+    "cid": "bafyreie6vwxrt6px6yr7jdcjbhrjbrxuyd6wkuazepls6tzyvaabfabknu",
+    "author": {
+     "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+     "handle": "claudedevs-mirr.selfhosted.social",
+     "displayName": "ClaudeDevs [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-17T03:07:06.647Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-02T19:06:54.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.images",
+      "images": [
+       {
+        "alt": "",
+        "aspectRatio": {
+         "height": 2160,
+         "width": 3840
+        },
+        "image": {
+         "$type": "blob",
+         "ref": {
+          "$link": "bafkreicxmwtjxg2umvti4jk2r457v3grrm7o5dk3gailh4qfjhfeemdboy"
+         },
+         "mimeType": "image/jpeg",
+         "size": 244161
+        }
+       }
+      ]
+     },
+     "text": "Computer use in the Claude Code desktop app now runs in the background.\n\nClaude works in the apps you've allowed it to while you keep working. It's already on if you've used computer use before, or turn it on in Settings > General. \n\nIn beta on Pro and Max, macOS only."
+    },
+    "embed": {
+     "images": [
+      {
+       "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicxmwtjxg2umvti4jk2r457v3grrm7o5dk3gailh4qfjhfeemdboy",
+       "fullsize": "https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicxmwtjxg2umvti4jk2r457v3grrm7o5dk3gailh4qfjhfeemdboy",
+       "alt": "",
+       "aspectRatio": {
+        "height": 2160,
+        "width": 3840
+       }
+      }
+     ],
+     "$type": "app.bsky.embed.images#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 1,
+    "repostCount": 0,
+    "likeCount": 3,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-02T20:05:22.000Z",
+    "labels": []
+   },
+   "opThreadPostIndex": 1,
+   "opThreadPostCount": 2
+  }
+ ],
+ "cursor": "2026-08-20T18:49:35Z"
+}

@@ -1,0 +1,623 @@
+{
+ "feed": [
+  {
+   "post": {
+    "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.post/4kky6yvekys22",
+    "cid": "bafyreihosbuyv5ltmqh2pagzhqrh7tu5kmd6z5ciz5dbywthw2fwxvebyu",
+    "author": {
+     "did": "did:plc:qx6jtj76ajqhnbnibdpgdtmy",
+     "handle": "bcherny-mirr.selfhosted.social",
+     "displayName": "Boris Cherny [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreifhk4inawhfpxlsqrki2amivskdak35j3lu6wsnc33tci7o23tegq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:44:24.147Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-03T19:11:27.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.recordWithMedia",
+      "media": {
+       "$type": "app.bsky.embed.external",
+       "external": {
+        "description": "Hi folks! ✨ AI;DR: Function Hooks let you modify CC very deeply, while still being safe through side-effect tracking over a parameterized $ object, and while composing neatly using a registration-o...",
+        "thumb": {
+         "$type": "blob",
+         "ref": {
+          "$link": "bafkreieowt5mo6bo7z46eegigbz3sjveljfget63fycurvnemybw7kj4im"
+         },
+         "mimeType": "image/jpeg",
+         "size": 49738
+        },
+        "title": "Function Hooks - make plugins 10x more powerful · Issue #91870 · anthropics/claude-code",
+        "uri": "https://github.com/anthropics/claude-code/issues/91870"
+       }
+      },
+      "record": {
+       "$type": "app.bsky.embed.record",
+       "record": {
+        "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+        "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+       }
+      }
+     },
+     "facets": [
+      {
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://github.com/anthropics/claude-code/issues/91870"
+        }
+       ],
+       "index": {
+        "byteEnd": 244,
+        "byteStart": 190
+       }
+      }
+     ],
+     "text": "Your input needed: would you use this?\n\nThis is an early look at how we're thinking about making Claude Code way more extensible. It's a little crazy, and very exciting.\n\nMore details here: https://github.com/anthropics/claude-code/issues/91870"
+    },
+    "embed": {
+     "media": {
+      "external": {
+       "uri": "https://github.com/anthropics/claude-code/issues/91870",
+       "title": "Function Hooks - make plugins 10x more powerful · Issue #91870 · anthropics/claude-code",
+       "description": "Hi folks! ✨ AI;DR: Function Hooks let you modify CC very deeply, while still being safe through side-effect tracking over a parameterized $ object, and while composing neatly using a registration-o...",
+       "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreieowt5mo6bo7z46eegigbz3sjveljfget63fycurvnemybw7kj4im"
+      },
+      "$type": "app.bsky.embed.external#view"
+     },
+     "record": {
+      "record": {
+       "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22",
+       "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+       "author": {
+        "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+        "handle": "claudedevs-mirr.selfhosted.social",
+        "displayName": "ClaudeDevs [UNOFFICIAL]",
+        "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+        "associated": {
+         "chat": {
+          "allowIncoming": "all"
+         },
+         "activitySubscription": {
+          "allowSubscriptions": "followers"
+         }
+        },
+        "labels": [],
+        "createdAt": "2026-04-17T03:07:06.647Z"
+       },
+       "value": {
+        "$type": "app.bsky.feed.post",
+        "createdAt": "2026-09-03T18:01:25.000Z",
+        "embed": {
+         "$type": "app.bsky.embed.video",
+         "aspectRatio": {
+          "height": 16,
+          "width": 9
+         },
+         "video": {
+          "$type": "blob",
+          "ref": {
+           "$link": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4"
+          },
+          "mimeType": "video/mp4",
+          "size": 13022381
+         }
+        },
+        "text": "We're exploring a new way to let you extend and customize Claude Code: Function Hooks.\n\nHere's a couple videos showing what you'd be able to do. It hasn't shipped yet, we'd love feedback on this on our GitHub issue."
+       },
+       "labels": [],
+       "likeCount": 0,
+       "replyCount": 2,
+       "repostCount": 0,
+       "quoteCount": 2,
+       "indexedAt": "2026-09-03T20:05:47.169Z",
+       "embeds": [
+        {
+         "cid": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4",
+         "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/playlist.m3u8",
+         "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/thumbnail.jpg",
+         "aspectRatio": {
+          "height": 16,
+          "width": 9
+         },
+         "$type": "app.bsky.embed.video#view"
+        }
+       ],
+       "$type": "app.bsky.embed.record#viewRecord"
+      }
+     },
+     "$type": "app.bsky.embed.recordWithMedia#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 2,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 1,
+    "indexedAt": "2026-09-03T20:07:13.672Z",
+    "labels": []
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:6mzi2kelzjs627mcn7jeffay/app.bsky.feed.post/56upinngs2c22",
+    "cid": "bafyreidryv7thwwwsnjjsziyh2ztvhjyxeqida66zeia3stjfte2ztuo64",
+    "author": {
+     "did": "did:plc:6mzi2kelzjs627mcn7jeffay",
+     "handle": "bcherny-mir-rt.selfhosted.social",
+     "displayName": "Retweeted by Boris Cherny [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:6mzi2kelzjs627mcn7jeffay/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [
+      {
+       "cts": "2026-08-08T00:04:31.748Z",
+       "src": "did:plc:ar7c4by46qjdydhdevvrndac",
+       "uri": "did:plc:6mzi2kelzjs627mcn7jeffay",
+       "val": "spam",
+       "ver": 1
+      }
+     ],
+     "createdAt": "2026-04-04T16:44:53.161Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-04T18:50:48.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.video",
+      "aspectRatio": {
+       "height": 9,
+       "width": 16
+      },
+      "video": {
+       "$type": "blob",
+       "ref": {
+        "$link": "bafkreihxo7z4tnb5pjvyfm6gkfjipzedirmsf7vxgam6pj3dzmjxg56glu"
+       },
+       "mimeType": "video/mp4",
+       "size": 3389057
+      }
+     },
+     "facets": [
+      {
+       "features": [
+        {
+         "$type": "app.bsky.richtext.facet#link",
+         "uri": "https://x.com/AnthropicAI"
+        }
+       ],
+       "index": {
+        "byteEnd": 15,
+        "byteStart": 3
+       }
+      }
+     ],
+     "text": "RT @AnthropicAI: Checking that a major mathematical proof is correct can take years. Formalization—converting the mathematical reasoning into a form computer proof assistants like Lean can verify—can help."
+    },
+    "embed": {
+     "cid": "bafkreihxo7z4tnb5pjvyfm6gkfjipzedirmsf7vxgam6pj3dzmjxg56glu",
+     "playlist": "https://video.bsky.app/watch/did%3Aplc%3A6mzi2kelzjs627mcn7jeffay/bafkreihxo7z4tnb5pjvyfm6gkfjipzedirmsf7vxgam6pj3dzmjxg56glu/playlist.m3u8",
+     "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3A6mzi2kelzjs627mcn7jeffay/bafkreihxo7z4tnb5pjvyfm6gkfjipzedirmsf7vxgam6pj3dzmjxg56glu/thumbnail.jpg",
+     "aspectRatio": {
+      "height": 9,
+      "width": 16
+     },
+     "$type": "app.bsky.embed.video#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 1,
+    "repostCount": 1,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-05T04:04:46.262Z",
+    "labels": []
+   },
+   "reason": {
+    "by": {
+     "did": "did:plc:qx6jtj76ajqhnbnibdpgdtmy",
+     "handle": "bcherny-mirr.selfhosted.social",
+     "displayName": "Boris Cherny [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreifhk4inawhfpxlsqrki2amivskdak35j3lu6wsnc33tci7o23tegq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:44:24.147Z"
+    },
+    "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.repost/5gm2t7vekfi22",
+    "cid": "bafyreieo6o4jax66k5tekz4rq3qio3wxbfxhcuujdynqtcc7gqmukir5ci",
+    "indexedAt": "2026-09-05T04:05:28.559Z",
+    "$type": "app.bsky.feed.defs#reasonRepost"
+   },
+   "opThreadPostIndex": 1,
+   "opThreadPostCount": 7
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.post/5h6dc4vd2kc22",
+    "cid": "bafyreicprjh2al6jkvcliet6c3iisl7j7zg2lpk6ynjmz7ks4l5ucljzqi",
+    "author": {
+     "did": "did:plc:qx6jtj76ajqhnbnibdpgdtmy",
+     "handle": "bcherny-mirr.selfhosted.social",
+     "displayName": "Boris Cherny [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreifhk4inawhfpxlsqrki2amivskdak35j3lu6wsnc33tci7o23tegq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:44:24.147Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-05T04:31:04.000Z",
+     "reply": {
+      "parent": {
+       "cid": "bafyreictofwmbkdhtojziieo4dedlaeodnfzmohr5hs7t2uf4pmxvfjihq",
+       "uri": "at://did:plc:6mzi2kelzjs627mcn7jeffay/app.bsky.feed.post/5grrlimu27g22"
+      },
+      "root": {
+       "cid": "bafyreihosbuyv5ltmqh2pagzhqrh7tu5kmd6z5ciz5dbywthw2fwxvebyu",
+       "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.post/4kky6yvekys22"
+      }
+     },
+     "text": "Ask Claude “why did the hook fail?”"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-05T05:05:26.460Z",
+    "labels": []
+   },
+   "reply": {
+    "root": {
+     "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.post/4kky6yvekys22",
+     "cid": "bafyreihosbuyv5ltmqh2pagzhqrh7tu5kmd6z5ciz5dbywthw2fwxvebyu",
+     "author": {
+      "did": "did:plc:qx6jtj76ajqhnbnibdpgdtmy",
+      "handle": "bcherny-mirr.selfhosted.social",
+      "displayName": "Boris Cherny [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreifhk4inawhfpxlsqrki2amivskdak35j3lu6wsnc33tci7o23tegq",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-04-04T16:44:24.147Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-03T19:11:27.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.recordWithMedia",
+       "media": {
+        "$type": "app.bsky.embed.external",
+        "external": {
+         "description": "Hi folks! ✨ AI;DR: Function Hooks let you modify CC very deeply, while still being safe through side-effect tracking over a parameterized $ object, and while composing neatly using a registration-o...",
+         "thumb": {
+          "$type": "blob",
+          "ref": {
+           "$link": "bafkreieowt5mo6bo7z46eegigbz3sjveljfget63fycurvnemybw7kj4im"
+          },
+          "mimeType": "image/jpeg",
+          "size": 49738
+         },
+         "title": "Function Hooks - make plugins 10x more powerful · Issue #91870 · anthropics/claude-code",
+         "uri": "https://github.com/anthropics/claude-code/issues/91870"
+        }
+       },
+       "record": {
+        "$type": "app.bsky.embed.record",
+        "record": {
+         "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+         "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22"
+        }
+       }
+      },
+      "facets": [
+       {
+        "features": [
+         {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://github.com/anthropics/claude-code/issues/91870"
+         }
+        ],
+        "index": {
+         "byteEnd": 244,
+         "byteStart": 190
+        }
+       }
+      ],
+      "text": "Your input needed: would you use this?\n\nThis is an early look at how we're thinking about making Claude Code way more extensible. It's a little crazy, and very exciting.\n\nMore details here: https://github.com/anthropics/claude-code/issues/91870"
+     },
+     "embed": {
+      "media": {
+       "external": {
+        "uri": "https://github.com/anthropics/claude-code/issues/91870",
+        "title": "Function Hooks - make plugins 10x more powerful · Issue #91870 · anthropics/claude-code",
+        "description": "Hi folks! ✨ AI;DR: Function Hooks let you modify CC very deeply, while still being safe through side-effect tracking over a parameterized $ object, and while composing neatly using a registration-o...",
+        "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreieowt5mo6bo7z46eegigbz3sjveljfget63fycurvnemybw7kj4im"
+       },
+       "$type": "app.bsky.embed.external#view"
+      },
+      "record": {
+       "record": {
+        "uri": "at://did:plc:jhrkugv2rlyvx5awfqdiwwiv/app.bsky.feed.post/4jkwe35csbw22",
+        "cid": "bafyreicqb7z3idfx2d4dvxkvbuft52f6l6ykfsxrkh6vjisx2bdbxoiari",
+        "author": {
+         "did": "did:plc:jhrkugv2rlyvx5awfqdiwwiv",
+         "handle": "claudedevs-mirr.selfhosted.social",
+         "displayName": "ClaudeDevs [UNOFFICIAL]",
+         "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:jhrkugv2rlyvx5awfqdiwwiv/bafkreicbd5ke2f2cum7wjflrf4s3ikwizgwo52l2pjzjlode55pvm7rsse",
+         "associated": {
+          "chat": {
+           "allowIncoming": "all"
+          },
+          "activitySubscription": {
+           "allowSubscriptions": "followers"
+          }
+         },
+         "labels": [],
+         "createdAt": "2026-04-17T03:07:06.647Z"
+        },
+        "value": {
+         "$type": "app.bsky.feed.post",
+         "createdAt": "2026-09-03T18:01:25.000Z",
+         "embed": {
+          "$type": "app.bsky.embed.video",
+          "aspectRatio": {
+           "height": 16,
+           "width": 9
+          },
+          "video": {
+           "$type": "blob",
+           "ref": {
+            "$link": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4"
+           },
+           "mimeType": "video/mp4",
+           "size": 13022381
+          }
+         },
+         "text": "We're exploring a new way to let you extend and customize Claude Code: Function Hooks.\n\nHere's a couple videos showing what you'd be able to do. It hasn't shipped yet, we'd love feedback on this on our GitHub issue."
+        },
+        "labels": [],
+        "likeCount": 0,
+        "replyCount": 2,
+        "repostCount": 0,
+        "quoteCount": 2,
+        "indexedAt": "2026-09-03T20:05:47.169Z",
+        "embeds": [
+         {
+          "cid": "bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4",
+          "playlist": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/playlist.m3u8",
+          "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Ajhrkugv2rlyvx5awfqdiwwiv/bafkreihxdee5usff3b2q4a356ypidtjimtg7k2f4kioguvejhpoh24n4w4/thumbnail.jpg",
+          "aspectRatio": {
+           "height": 16,
+           "width": 9
+          },
+          "$type": "app.bsky.embed.video#view"
+         }
+        ],
+        "$type": "app.bsky.embed.record#viewRecord"
+       }
+      },
+      "$type": "app.bsky.embed.recordWithMedia#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 2,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 1,
+     "indexedAt": "2026-09-03T20:07:13.672Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "parent": {
+     "uri": "at://did:plc:6mzi2kelzjs627mcn7jeffay/app.bsky.feed.post/5grrlimu27g22",
+     "cid": "bafyreictofwmbkdhtojziieo4dedlaeodnfzmohr5hs7t2uf4pmxvfjihq",
+     "author": {
+      "did": "did:plc:6mzi2kelzjs627mcn7jeffay",
+      "handle": "bcherny-mir-rt.selfhosted.social",
+      "displayName": "Retweeted by Boris Cherny [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:6mzi2kelzjs627mcn7jeffay/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [
+       {
+        "cts": "2026-08-08T00:04:31.748Z",
+        "src": "did:plc:ar7c4by46qjdydhdevvrndac",
+        "uri": "did:plc:6mzi2kelzjs627mcn7jeffay",
+        "val": "spam",
+        "ver": 1
+       }
+      ],
+      "createdAt": "2026-04-04T16:44:53.161Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-05T04:03:38.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.images",
+       "images": [
+        {
+         "alt": "",
+         "aspectRatio": {
+          "height": 132,
+          "width": 484
+         },
+         "image": {
+          "$type": "blob",
+          "ref": {
+           "$link": "bafkreidzmwpegivebhg3aejvh7gbupudsbzi4qb2qjbwplzf6bqwqsrmva"
+          },
+          "mimeType": "image/png",
+          "size": 6388
+         }
+        }
+       ]
+      },
+      "facets": [
+       {
+        "features": [
+         {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://x.com/aabyzov"
+         }
+        ],
+        "index": {
+         "byteEnd": 11,
+         "byteStart": 3
+        }
+       }
+      ],
+      "reply": {
+       "parent": {
+        "cid": "bafyreihosbuyv5ltmqh2pagzhqrh7tu5kmd6z5ciz5dbywthw2fwxvebyu",
+        "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.post/4kky6yvekys22"
+       },
+       "root": {
+        "cid": "bafyreihosbuyv5ltmqh2pagzhqrh7tu5kmd6z5ciz5dbywthw2fwxvebyu",
+        "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.post/4kky6yvekys22"
+       }
+      },
+      "text": "RT @aabyzov: There should be an easy way to recover or fix the hooks failing constantly\n\nWhat is the recommended way to debug this?"
+     },
+     "embed": {
+      "images": [
+       {
+        "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:6mzi2kelzjs627mcn7jeffay/bafkreidzmwpegivebhg3aejvh7gbupudsbzi4qb2qjbwplzf6bqwqsrmva",
+        "fullsize": "https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:6mzi2kelzjs627mcn7jeffay/bafkreidzmwpegivebhg3aejvh7gbupudsbzi4qb2qjbwplzf6bqwqsrmva",
+        "alt": "",
+        "aspectRatio": {
+         "height": 132,
+         "width": 484
+        }
+       }
+      ],
+      "$type": "app.bsky.embed.images#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 1,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-05T05:04:28.065Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "grandparentAuthor": {
+     "did": "did:plc:qx6jtj76ajqhnbnibdpgdtmy",
+     "handle": "bcherny-mirr.selfhosted.social",
+     "displayName": "Boris Cherny [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreifhk4inawhfpxlsqrki2amivskdak35j3lu6wsnc33tci7o23tegq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:44:24.147Z"
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:qx6jtj76ajqhnbnibdpgdtmy/app.bsky.feed.post/3yp4punecww22",
+    "cid": "bafyreicqeeny3js4elbwr7xreyhp3w4rsirx5hry5hr2lkizdnr73vbugm",
+    "author": {
+     "did": "did:plc:qx6jtj76ajqhnbnibdpgdtmy",
+     "handle": "bcherny-mirr.selfhosted.social",
+     "displayName": "Boris Cherny [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:qx6jtj76ajqhnbnibdpgdtmy/bafkreifhk4inawhfpxlsqrki2amivskdak35j3lu6wsnc33tci7o23tegq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-04-04T16:44:24.147Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-02T22:22:13.000Z",
+     "embed": {
+      "$type": "app.bsky.embed.video",
+      "aspectRatio": {
+       "height": 9,
+       "width": 16
+      },
+      "video": {
+       "$type": "blob",
+       "ref": {
+        "$link": "bafkreigihqerzsjks4opfdpbt7t565efc3yiyqxqxsabiffzrxiwkwrw2i"
+       },
+       "mimeType": "video/mp4",
+       "size": 22949123
+      }
+     },
+     "text": "Fable 5.1 makes Claude Tag even more useful. Here it builds a last-minute leadership deck from a metrics spreadsheet and other data across Slack, spots a vendor report that disagrees with the numbers, and flags it before moving on.\n\nClaude Tag is available in Slack on Team and Enterprise plans."
+    },
+    "embed": {
+     "cid": "bafkreigihqerzsjks4opfdpbt7t565efc3yiyqxqxsabiffzrxiwkwrw2i",
+     "playlist": "https://video.bsky.app/watch/did%3Aplc%3Aqx6jtj76ajqhnbnibdpgdtmy/bafkreigihqerzsjks4opfdpbt7t565efc3yiyqxqxsabiffzrxiwkwrw2i/playlist.m3u8",
+     "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Aqx6jtj76ajqhnbnibdpgdtmy/bafkreigihqerzsjks4opfdpbt7t565efc3yiyqxqxsabiffzrxiwkwrw2i/thumbnail.jpg",
+     "aspectRatio": {
+      "height": 9,
+      "width": 16
+     },
+     "$type": "app.bsky.embed.video#view"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 1,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-02T23:04:44.308Z",
+    "labels": []
+   }
+  }
+ ],
+ "cursor": "2026-09-01T21:24:19Z"
+}

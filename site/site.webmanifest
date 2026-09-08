@@ -1,0 +1,13 @@
+{
+  "name": "AI Reset Watch",
+  "short_name": "Reset Watch",
+  "description": "Public reset and quota-change signals for Claude Code, Codex, and Gemini CLI.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f2efe6",
+  "theme_color": "#151713",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Live cdn.syndication.twimg.com/tweet-result?id=<id>&token=0 responses, read",
+    "on 2026-09-06 from this host with no auth. Each entry keeps the fields",
+    "scripts/fetch_anthropic.read_post_response consumes, with the values exactly",
+    "as returned. The full top-level key set of both live responses was:",
+    "__typename, conversation_count, created_at, display_text_range, edit_control,",
+    "entities, favorite_count, id_str, isEdited, isStaleEdit, lang,",
+    "news_action_type, text, user. Note what is NOT there: neither response",
+    "carried in_reply_to_screen_name or in_reply_to_status_id_str at all, which is",
+    "why absent reply keys have to mean 'not a reply'.",
+    "These two ids are the resets the project missed; they are the whole reason",
+    "the Anthropic lane exists, and they are the only two ids verified live while",
+    "this code was written (the endpoint is a courtesy service)."
+  ],
+  "2094856679250919746": {
+    "text": "With Fable 5.1 out today, we've also reset 5-hour and weekly limits for all users.",
+    "created_at": "2026-09-01T18:35:27.000Z",
+    "id_str": "2094856679250919746",
+    "display_text_range": [0, 82],
+    "lang": "en",
+    "isEdited": false,
+    "user": {
+      "id_str": "2024518793679294464",
+      "name": "ClaudeDevs",
+      "screen_name": "ClaudeDevs",
+      "is_blue_verified": true
+    }
+  },
+  "2095967323412930677": {
+    "text": "We've just reset weekly limits for everyone on a Claude Max plan.\n\nWith Fable 5.1 out and a long weekend ahead for many of you, we wanted to keep you building. I'd love to see what you build!",
+    "created_at": "2026-09-04T20:08:45.000Z",
+    "id_str": "2095967323412930677",
+    "display_text_range": [0, 191],
+    "lang": "en",
+    "isEdited": false,
+    "user": {
+      "id_str": "879696238953865217",
+      "name": "Lydia Hallie ✨",
+      "screen_name": "lydiahallie",
+      "is_blue_verified": true
+    }
+  }
+}

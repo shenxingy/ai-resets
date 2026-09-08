@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Methodology &amp; Sources — AI Reset Watch</title>
+  <meta name="description" content="How AI Reset Watch collects, labels, analyzes, and cites Claude Code, Codex, and Gemini quota-change signals.">
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
+  <meta property="og:title" content="Methodology &amp; Sources — AI Reset Watch">
+  <meta property="og:description" content="How AI Reset Watch collects, labels, analyzes, and cites public AI quota-change signals.">
+  <meta property="og:image" content="https://resets.alexshen.dev/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AI Reset Watch — Know when the limits move">
+  <meta property="og:url" content="https://resets.alexshen.dev/methodology.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="AI Reset Watch">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Methodology &amp; Sources — AI Reset Watch">
+  <meta name="twitter:description" content="How AI Reset Watch collects, labels, analyzes, and cites public AI quota-change signals.">
+  <meta name="twitter:image" content="https://resets.alexshen.dev/og-image.png">
+  <link rel="canonical" href="https://resets.alexshen.dev/methodology.html">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#151713">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,600&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://resets.alexshen.dev/methodology.html","name":"Methodology & Sources — AI Reset Watch","url":"https://resets.alexshen.dev/methodology.html","dateModified":"2026-09-05","isPartOf":{"@id":"https://resets.alexshen.dev/#website"},"about":{"@id":"https://resets.alexshen.dev/#dataset"}},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does AI Reset Watch know when provider systems actually reset?","acceptedAnswer":{"@type":"Answer","text":"Only for one account. A probe on one Codex Pro account reads that account\u2019s own usage windows about once a minute and can say whether a window expired on schedule or cleared early. Everything else is linked public announcements. No provider telemetry or internal execution time is visible to this site."}},{"@type":"Question","name":"Are the timing patterns predictions?","acceptedAnswer":{"@type":"Answer","text":"No. Weekday and time-of-day views are descriptive summaries of tracked public announcement timestamps in Pacific Time. Small samples and missing announcements can create apparent clusters."}},{"@type":"Question","name":"Is AI Reset Watch affiliated with Anthropic, OpenAI, or Google?","acceptedAnswer":{"@type":"Answer","text":"No. AI Reset Watch is independently maintained and unaffiliated with the providers it tracks."}}]}]}
+  </script>
+</head>
+<body>
+  <main class="legal-shell methodology-shell">
+    <nav class="legal-nav"><a class="back-link" href="/">← AI Reset Watch</a><a class="back-link" href="/data.json">Public data ↗</a></nav>
+    <header class="legal-header">
+      <p class="section-index">Methodology / v1</p>
+      <h1>Evidence before prediction.</h1>
+      <p>AI Reset Watch is an independent, unaffiliated record of public usage-reset and quota-policy announcements, plus direct measurements of one operator-owned Codex account. This page explains what each kind of evidence can—and cannot—support.</p>
+    </header>
+
+    <div class="legal-content">
+      <section id="scope">
+        <h2>What counts as a signal</h2>
+        <p>An event must describe a usage reset, a temporary quota intervention, or a durable quota-policy change affecting Claude Code, Codex/ChatGPT, Gemini CLI, or Code Assist. Product launches and unrelated status incidents are excluded.</p>
+        <p>Times represent the linked public announcement or the closest observable publication time. They are not internal provider execution timestamps. Events labeled “approximate” have date-level uncertainty and should not be used for hour-of-day analysis.</p>
+        <p>Own-account <em>observations</em> are a separate kind of row with separate rules. They are described in <a href="#ground-truth">Natural expiry or an actual reset</a> and never enter the announcement counts, the “last tracked move” figure, or the weekday timing pattern.</p>
+      </section>
+
+      <section id="sources">
+        <h2>Sources and coverage</h2>
+        <ul>
+          <li><strong>OpenAI:</strong> refreshed from the public <a href="https://codex-resets.com/" rel="noopener">codex-resets.com</a> feed, with event links retained to the original public posts. The upstream feed is a secondary aggregation source.</li>
+          <li><strong>Anthropic:</strong> manually curated from <a href="https://x.com/ClaudeDevs" rel="noopener">@ClaudeDevs</a>. Coverage may be incomplete; uncertain dates carry an approximate-confidence label.</li>
+          <li><strong>Google:</strong> manually curated from official Google and Google Developers announcements. These are generally durable policy changes rather than recurring resets.</li>
+        </ul>
+        <p>The OpenAI feed is refreshed about every five minutes. Anthropic and Google updates are curated less frequently. A missing event does not prove that no provider-side action occurred.</p>
+      </section>
+
+      <section id="ground-truth">
+        <h2>Natural expiry or an actual reset</h2>
+        <p>Every Codex usage window carries a scheduled expiry time. A probe on one Codex Pro account reads that time, the percentage used, and the banked reset-credit count about once a minute, and records the values on both sides of every change. When the counter clears, the recorded evidence is what separates four different things that all look identical on screen.</p>
+        <dl>
+          <dt><strong>Scheduled expiry</strong></dt>
+          <dd>The clear landed at or after the expiry time that was in force while the window still had usage on it. The window reached the end of its life. This is not a reset, and it is a statement about our window, not about the provider.</dd>
+          <dt><strong>Cleared early · unexplained</strong></dt>
+          <dd>The clear landed before that expiry time, and the banked-credit count was read on both sides of the clear and did not fall. Nothing this account did explains it. That is the strongest claim on this site and it is still bounded: one account on one plan tier cannot see who else was affected, so this never means “the provider reset everyone.”</dd>
+          <dt><strong>Cannot tell</strong></dt>
+          <dd>No scheduled expiry time was on record for that window when it cleared. An unexplained clear is never claimed from a missing anchor.</dd>
+          <dt><strong>Limits rescaled</strong></dt>
+          <dd>The limits themselves moved rather than the counter clearing.</dd>
+        </dl>
+        <p>A fifth outcome exists and is never published: a clear the account holder caused by spending one of their own banked reset credits, identified by the credit count falling across the clear. Those rows, and the arrival of a new banked credit, describe the operator’s own account activity rather than anything a provider did, so they stay out of the public feed.</p>
+        <p>Each provider card carries a badge naming its evidence: <em>Ground truth · verified N ago</em> when the probe reported within the last 15 minutes, <em>Ground truth · probe offline N</em> when it has not, and <em>Announcements only</em> for a provider with no probe at all.</p>
+        <h3>What this cannot see</h3>
+        <ul>
+          <li><strong>One Codex Pro account.</strong> Observations on a single account and plan tier can never establish what happened to anyone else.</li>
+          <li><strong>The weekly window only.</strong> The 5-hour windows on this account have read 0% for their entire recorded history, so nothing has ever cleared on them to observe.</li>
+          <li><strong>Nothing under 10% used.</strong> A clear on a barely-used window is discarded, because ordinary usage noise at that level is indistinguishable from a clear. A real reset of a nearly empty window is invisible here.</li>
+          <li><strong>Arrival, not rollout.</strong> Timing is when the change reached this account, bracketed by the two polls either side of it, not when a provider began rolling it out.</li>
+          <li><strong>Anthropic and Google are not measured at all.</strong> Their cards say “Announcements only” because that is all they are.</li>
+        </ul>
+        <p>The verdict, the evidence sentence, and the probe’s own freshness are published in <a href="/data.json">data.json</a> alongside the announcements.</p>
+      </section>
+
+      <section id="forecast">
+        <h2>Forecast language</h2>
+        <p>The site does not publish a single predicted reset date. Backtests found that point estimates implied more precision than the history supports. Where enough gaps exist, the interface instead reports an empirical conditional rate: among historical gaps already at least as long as the current wait, what fraction ended within the following seven days?</p>
+        <p>Small comparison sets are labeled. Historical frequency is context, not a promise, causal model, or provider commitment.</p>
+      </section>
+
+      <section id="timing">
+        <h2>Weekday and time-of-day patterns</h2>
+        <p>Codex events with exact timestamps are converted to <code>America/Los_Angeles</code>, including daylight-saving changes, and grouped into four six-hour periods: overnight (00:00–05:59), morning (06:00–11:59), afternoon (12:00–17:59), and evening (18:00–23:59).</p>
+        <p>The “last 30 days” callout is compared with the complete tracked history. It is descriptive only. Repeated posts may be related, event discovery may be incomplete, and choosing a pattern after seeing the data can exaggerate apparent regularity. The interface therefore calls recent Friday concentration a weak observation rather than a routine.</p>
+      </section>
+
+      <section id="machine-readable">
+        <h2>Machine-readable access and attribution</h2>
+        <p>The complete merged feed is published as <a href="/data.json">JSON</a>. Each event includes a vendor-scoped identifier, announcement time, text, event kind, confidence where applicable, and a source URL. A provider with an own-account probe also carries a <code>probe</code> block (status, last verified time, coverage sentence) and an <code>observations</code> list; only observations cleared for publication appear there. The homepage also publishes Dataset structured data and a crawlable snapshot of current signals.</p>
+        <p>When citing this tracker, link both AI Reset Watch and the event’s original source. Do not describe this independent aggregation as an official provider record.</p>
+      </section>
+
+      <section id="faq">
+        <h2>Frequently asked questions</h2>
+        <h3>Does the site know when provider systems actually reset?</h3>
+        <p>Only for one account. A probe on one Codex Pro account measures that account’s own usage windows and can say whether a window expired on schedule or cleared early with no explanation on our side. Everything else is public announcements. No provider telemetry is visible to this site, and no observation here describes any account but ours.</p>
+        <h3>Are timing patterns predictions?</h3>
+        <p>No. They summarize tracked announcement timestamps and are explicitly limited by sample size and coverage.</p>
+        <h3>Is this affiliated with Anthropic, OpenAI, or Google?</h3>
+        <p>No. AI Reset Watch is independently maintained and unaffiliated.</p>
+      </section>
+
+      <section id="corrections">
+        <h2>Corrections</h2>
+        <p>If a timestamp, description, or source link is wrong, use the contact route on <a href="https://alexshen.dev/" rel="noopener">alexshen.dev</a>. Corrections should include the event and a primary public source.</p>
+      </section>
+
+      <p>Last reviewed September 5, 2026.</p>
+    </div>
+  </main>
+  <script src="analytics.js"></script>
+</body>
+</html>

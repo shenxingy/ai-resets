@@ -1,0 +1,47 @@
+[Unit]
+Description=AI Reset Watch ground-truth Codex quota probe
+Documentation=__PUBLIC_URL__
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# A long-running loop rather than a 60s timer: systemd's monotonic timers
+# drift (the notify timer measurably slides ~1.3s/cycle and sweeps its whole
+# window every 19h), and a oneshot would pay process startup on every poll.
+Type=simple
+User=__AI_RESETS_USER__
+Group=__AI_RESETS_GROUP__
+WorkingDirectory=__AI_RESETS_REPO__
+Environment=AI_RESETS_POLL_SECONDS=60
+Environment=AI_RESETS_STATE=/var/lib/ai-resets
+# `codex` on PATH is a statusline wrapper, and systemd's PATH excludes
+# ~/.local/bin regardless. Address the real binary directly; the `current`
+# component is the package symlink, so upgrades are followed automatically.
+Environment=AI_RESETS_CODEX_BIN=__CODEX_BIN__
+ExecStart=/usr/bin/python3 __AI_RESETS_REPO__/scripts/quota_probe.py
+Restart=always
+RestartSec=10
+
+StateDirectory=ai-resets
+StateDirectoryMode=0700
+UMask=0077
+
+# The probe shells out to the Codex CLI, which writes sessions and cache into
+# ~/.codex. ProtectHome=read-only alone makes app-server hang until the RPC
+# times out (bisected against the other five properties, which are all
+# harmless), so home stays read-only with exactly that one directory punched
+# through. No credential is read by this process itself.
+ReadWritePaths=__CODEX_HOME__
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=read-only
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

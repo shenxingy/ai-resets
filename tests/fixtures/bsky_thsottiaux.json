@@ -1,0 +1,399 @@
+{
+ "feed": [
+  {
+   "post": {
+    "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6knowaffc6q22",
+    "cid": "bafyreih5pdzyzyfydvnoeymtauafoci4szpxvg2wnd5iad4hgbu5ztcfem",
+    "author": {
+     "did": "did:plc:rcaom2u2hfsm3aqab5dfvhxs",
+     "handle": "thsottiaux-mirr.selfhosted.social",
+     "displayName": "Tibo [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:rcaom2u2hfsm3aqab5dfvhxs/bafkreifmqno3cvhncdttd5r6p2reeqe2ppmgao4bpofnbdxj54jxs2vroq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-07-19T01:14:47.070Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-06T21:51:18.000Z",
+     "text": "We've made some improvements that improve usage on the long tail for power users of Astra when logged in with your ChatGPT account.\n\nNo change in quality and a pure win that on the long tail can result in up to 3-4X less usage being drawn from the subscription."
+    },
+    "bookmarkCount": 0,
+    "replyCount": 2,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-06T22:02:26.368Z",
+    "labels": []
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6iyozvncceq22",
+    "cid": "bafyreifspsvxhssdjchxeh2pvkbgi4fr3soqfgtp55kzjr7imrtg4xevcu",
+    "author": {
+     "did": "did:plc:rcaom2u2hfsm3aqab5dfvhxs",
+     "handle": "thsottiaux-mirr.selfhosted.social",
+     "displayName": "Tibo [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:rcaom2u2hfsm3aqab5dfvhxs/bafkreifmqno3cvhncdttd5r6p2reeqe2ppmgao4bpofnbdxj54jxs2vroq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-07-19T01:14:47.070Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-06T19:55:32.000Z",
+     "text": "To calibrate you all on which reasoning effort to use for Astra, know that GPT-6 Astra on low performs better than GPT-5.6 Sol on high.\n\nIf you were using high reasoning efforts with Sol and were happy, I suggest you move down to low or medium for Astra."
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 2,
+    "indexedAt": "2026-09-06T20:02:27.766Z",
+    "labels": []
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6nw4fl5g2uc22",
+    "cid": "bafyreia7tpbt2ub3jd3x5sn6ernknsqo3yplstekkin4riezmer5j3vjyq",
+    "author": {
+     "did": "did:plc:rcaom2u2hfsm3aqab5dfvhxs",
+     "handle": "thsottiaux-mirr.selfhosted.social",
+     "displayName": "Tibo [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:rcaom2u2hfsm3aqab5dfvhxs/bafkreifmqno3cvhncdttd5r6p2reeqe2ppmgao4bpofnbdxj54jxs2vroq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-07-19T01:14:47.070Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-07T01:39:25.000Z",
+     "reply": {
+      "parent": {
+       "cid": "bafyreiam3xj6hz43yatgtw3xkm5wbnnhq6ha3pvxl3zmct5a3l5ovzt5fm",
+       "uri": "at://did:plc:ws6bntxydp6t5fh4xid2s6ue/app.bsky.feed.post/6jtsrbnec5i22"
+      },
+      "root": {
+       "cid": "bafyreiam3xj6hz43yatgtw3xkm5wbnnhq6ha3pvxl3zmct5a3l5ovzt5fm",
+       "uri": "at://did:plc:ws6bntxydp6t5fh4xid2s6ue/app.bsky.feed.post/6jtsrbnec5i22"
+      }
+     },
+     "text": "Glad you like it!"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-07T01:48:26.759Z",
+    "labels": []
+   },
+   "reply": {
+    "root": {
+     "uri": "at://did:plc:ws6bntxydp6t5fh4xid2s6ue/app.bsky.feed.post/6jtsrbnec5i22",
+     "cid": "bafyreiam3xj6hz43yatgtw3xkm5wbnnhq6ha3pvxl3zmct5a3l5ovzt5fm",
+     "author": {
+      "did": "did:plc:ws6bntxydp6t5fh4xid2s6ue",
+      "handle": "thsottiaux-mir-rt.selfhosted.social",
+      "displayName": "Retweeted by Tibo [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:ws6bntxydp6t5fh4xid2s6ue/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-07-19T01:15:30.967Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-06T20:54:46.000Z",
+      "facets": [
+       {
+        "features": [
+         {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://x.com/melbourneandrew"
+         }
+        ],
+        "index": {
+         "byteEnd": 19,
+         "byteStart": 3
+        }
+       }
+      ],
+      "text": "RT @melbourneandrew: I'm so glad OpenAI figured out how to name models"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 1,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-07T01:47:28.261Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "parent": {
+     "uri": "at://did:plc:ws6bntxydp6t5fh4xid2s6ue/app.bsky.feed.post/6jtsrbnec5i22",
+     "cid": "bafyreiam3xj6hz43yatgtw3xkm5wbnnhq6ha3pvxl3zmct5a3l5ovzt5fm",
+     "author": {
+      "did": "did:plc:ws6bntxydp6t5fh4xid2s6ue",
+      "handle": "thsottiaux-mir-rt.selfhosted.social",
+      "displayName": "Retweeted by Tibo [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:ws6bntxydp6t5fh4xid2s6ue/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-07-19T01:15:30.967Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-06T20:54:46.000Z",
+      "facets": [
+       {
+        "features": [
+         {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://x.com/melbourneandrew"
+         }
+        ],
+        "index": {
+         "byteEnd": 19,
+         "byteStart": 3
+        }
+       }
+      ],
+      "text": "RT @melbourneandrew: I'm so glad OpenAI figured out how to name models"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 1,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-07T01:47:28.261Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    }
+   }
+  },
+  {
+   "post": {
+    "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6net56nd2ji22",
+    "cid": "bafyreig5xv6uoiu3f2n5ldocnatpirbahphdvmszyzkqsqmywyl4v6ujby",
+    "author": {
+     "did": "did:plc:rcaom2u2hfsm3aqab5dfvhxs",
+     "handle": "thsottiaux-mirr.selfhosted.social",
+     "displayName": "Tibo [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:rcaom2u2hfsm3aqab5dfvhxs/bafkreifmqno3cvhncdttd5r6p2reeqe2ppmgao4bpofnbdxj54jxs2vroq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-07-19T01:14:47.070Z"
+    },
+    "record": {
+     "$type": "app.bsky.feed.post",
+     "createdAt": "2026-09-07T01:01:39.000Z",
+     "reply": {
+      "parent": {
+       "cid": "bafyreid52q5ovrj42uxglzshb2dqz5c6uzfbjtvq4kwnkx5lpoaxs7humq",
+       "uri": "at://did:plc:ws6bntxydp6t5fh4xid2s6ue/app.bsky.feed.post/6jpkllvdkja22"
+      },
+      "root": {
+       "cid": "bafyreihk2ko67pqmnjauyd64kwolaft7yfdf2rkabhsoxsgphd3ox6lzja",
+       "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6jkixvfic4222"
+      }
+     },
+     "text": "Did you ship comic sans again?"
+    },
+    "bookmarkCount": 0,
+    "replyCount": 0,
+    "repostCount": 0,
+    "likeCount": 0,
+    "quoteCount": 0,
+    "indexedAt": "2026-09-07T01:03:28.663Z",
+    "labels": []
+   },
+   "reply": {
+    "root": {
+     "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6jkixvfic4222",
+     "cid": "bafyreihk2ko67pqmnjauyd64kwolaft7yfdf2rkabhsoxsgphd3ox6lzja",
+     "author": {
+      "did": "did:plc:rcaom2u2hfsm3aqab5dfvhxs",
+      "handle": "thsottiaux-mirr.selfhosted.social",
+      "displayName": "Tibo [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:rcaom2u2hfsm3aqab5dfvhxs/bafkreifmqno3cvhncdttd5r6p2reeqe2ppmgao4bpofnbdxj54jxs2vroq",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-07-19T01:14:47.070Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-06T20:34:26.000Z",
+      "text": "Astra on NVIDIA GPUs every morning: You're not talking to somebody who woke up a loser. That loser attitude, that loser premise makes no sense to me. We are not a car. Brrrrrrr"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 2,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-06T20:47:27.171Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "parent": {
+     "uri": "at://did:plc:ws6bntxydp6t5fh4xid2s6ue/app.bsky.feed.post/6jpkllvdkja22",
+     "cid": "bafyreid52q5ovrj42uxglzshb2dqz5c6uzfbjtvq4kwnkx5lpoaxs7humq",
+     "author": {
+      "did": "did:plc:ws6bntxydp6t5fh4xid2s6ue",
+      "handle": "thsottiaux-mir-rt.selfhosted.social",
+      "displayName": "Retweeted by Tibo [UNOFFICIAL]",
+      "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:ws6bntxydp6t5fh4xid2s6ue/bafkreiftdny355bhpiphmyitalv6zmw3hm26deaoptkqp56whgbw5bu66y",
+      "associated": {
+       "chat": {
+        "allowIncoming": "all"
+       },
+       "activitySubscription": {
+        "allowSubscriptions": "followers"
+       }
+      },
+      "labels": [],
+      "createdAt": "2026-07-19T01:15:30.967Z"
+     },
+     "record": {
+      "$type": "app.bsky.feed.post",
+      "createdAt": "2026-09-06T20:45:28.000Z",
+      "embed": {
+       "$type": "app.bsky.embed.images",
+       "images": [
+        {
+         "alt": "",
+         "aspectRatio": {
+          "height": 864,
+          "width": 1681
+         },
+         "image": {
+          "$type": "blob",
+          "ref": {
+           "$link": "bafkreicc3w5pv4czgxxdcwushrhryurn644k3xwalrebisdsw5zss6piqe"
+          },
+          "mimeType": "image/jpeg",
+          "size": 43909
+         }
+        }
+       ]
+      },
+      "facets": [
+       {
+        "features": [
+         {
+          "$type": "app.bsky.richtext.facet#link",
+          "uri": "https://x.com/israelfemiojo"
+         }
+        ],
+        "index": {
+         "byteEnd": 17,
+         "byteStart": 3
+        }
+       }
+      ],
+      "reply": {
+       "parent": {
+        "cid": "bafyreihk2ko67pqmnjauyd64kwolaft7yfdf2rkabhsoxsgphd3ox6lzja",
+        "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6jkixvfic4222"
+       },
+       "root": {
+        "cid": "bafyreihk2ko67pqmnjauyd64kwolaft7yfdf2rkabhsoxsgphd3ox6lzja",
+        "uri": "at://did:plc:rcaom2u2hfsm3aqab5dfvhxs/app.bsky.feed.post/6jkixvfic4222"
+       }
+      },
+      "text": "RT @israelfemiojo: Me asking Astra"
+     },
+     "embed": {
+      "images": [
+       {
+        "thumb": "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:ws6bntxydp6t5fh4xid2s6ue/bafkreicc3w5pv4czgxxdcwushrhryurn644k3xwalrebisdsw5zss6piqe",
+        "fullsize": "https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:ws6bntxydp6t5fh4xid2s6ue/bafkreicc3w5pv4czgxxdcwushrhryurn644k3xwalrebisdsw5zss6piqe",
+        "alt": "",
+        "aspectRatio": {
+         "height": 864,
+         "width": 1681
+        }
+       }
+      ],
+      "$type": "app.bsky.embed.images#view"
+     },
+     "bookmarkCount": 0,
+     "replyCount": 1,
+     "repostCount": 0,
+     "likeCount": 0,
+     "quoteCount": 0,
+     "indexedAt": "2026-09-07T01:02:31.565Z",
+     "labels": [],
+     "$type": "app.bsky.feed.defs#postView"
+    },
+    "grandparentAuthor": {
+     "did": "did:plc:rcaom2u2hfsm3aqab5dfvhxs",
+     "handle": "thsottiaux-mirr.selfhosted.social",
+     "displayName": "Tibo [UNOFFICIAL]",
+     "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:rcaom2u2hfsm3aqab5dfvhxs/bafkreifmqno3cvhncdttd5r6p2reeqe2ppmgao4bpofnbdxj54jxs2vroq",
+     "associated": {
+      "chat": {
+       "allowIncoming": "all"
+      },
+      "activitySubscription": {
+       "allowSubscriptions": "followers"
+      }
+     },
+     "labels": [],
+     "createdAt": "2026-07-19T01:14:47.070Z"
+    }
+   }
+  }
+ ],
+ "cursor": "2026-09-05T04:56:01Z"
+}

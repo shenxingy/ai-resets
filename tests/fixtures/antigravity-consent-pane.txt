@@ -1,0 +1,46 @@
+
+     ▄▀▀▄
+    ▀▀▀▀▀▀
+   ▀▀▀▀▀▀▀▀
+  ▄▀▀    ▀▀▄
+ ▄▀▀      ▀▀▄
+
+ Open the URL below in your browser:                             
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleus
+ ercontent.com&code_challenge=REDACTED-PKCE-CHALLENGE-VALUE-NOT-A-SECRET&code_challenge_method=S256&prompt=consent&redirect_uri=http
+ s%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+http
+ s%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.go
+ ogleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%
+ 2Faicode+openid&state=REDACTED-STATE-NONCE
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ After authenticating, copy the code displayed in the browser and paste it below:
+
+ authorization code...
+
+
+  shift+up/down Navigate
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

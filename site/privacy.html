@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy — AI Reset Watch</title>
+  <meta name="description" content="How AI Reset Watch handles page analytics and email alert subscriptions.">
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#151713">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="legal-shell">
+    <nav class="legal-nav"><a class="back-link" href="/">← AI Reset Watch</a></nav>
+    <header class="legal-header">
+      <p class="section-index">Privacy / v2</p>
+      <h1>A small list with a narrow purpose.</h1>
+      <p>Email alerts exist only to tell you about newly tracked usage resets and quota-policy changes from the providers you choose.</p>
+    </header>
+
+    <div class="legal-content">
+      <section>
+        <h2>What we store</h2>
+        <p>Your normalized email address, selected providers, subscription status, consent version and timestamps, plus delivery IDs needed to avoid duplicate sends. We do not ask for or connect to your AI-provider accounts.</p>
+      </section>
+
+      <section>
+        <h2>How confirmation works</h2>
+        <p>New subscriptions use double opt-in. The first email opens a review page; alerts begin only after you explicitly confirm there. Confirmation links expire after 24 hours and can be used once.</p>
+      </section>
+
+      <section>
+        <h2>Delivery and tracking</h2>
+        <p>Resend processes the email address and message for delivery. AI Reset Watch does not enable open or click tracking. Resend bounce, complaint and suppression events are used to stop sending to addresses that should no longer receive mail.</p>
+      </section>
+
+      <section>
+        <h2>Website analytics</h2>
+        <p>We use a privacy-minimized PostHog page-view event to understand which public pages are useful. It records the page path, page title, this site’s hostname and—when present—the referring website’s hostname. It does not record query strings, form contents, email addresses, session replays or automatic click events.</p>
+        <p>The analytics code does not set cookies or use local storage, creates no persistent visitor profile, disables GeoIP enrichment, and honors Global Privacy Control and “Do Not Track.” PostHog processes the request IP as the analytics transport provider even though this site does not retain it as an event property.</p>
+      </section>
+
+      <section>
+        <h2>Your controls</h2>
+        <p>Every alert contains links to change provider preferences and unsubscribe. Mail clients that support one-click unsubscribe can stop alerts directly from their interface. Unsubscribing takes effect immediately.</p>
+      </section>
+
+      <section>
+        <h2>Retention and questions</h2>
+        <p>Unsubscribed records are retained only as needed to honor the opt-out and protect sending reputation. To request deletion or ask a privacy question, use the contact route on <a href="https://alexshen.dev/" rel="noopener">alexshen.dev</a>.</p>
+      </section>
+
+      <p>Effective August 1, 2026.</p>
+    </div>
+  </main>
+  <script src="analytics.js"></script>
+</body>
+</html>

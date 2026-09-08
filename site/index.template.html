@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Reset Watch — Claude, Codex &amp; Gemini Reset Signals</title>
+  <meta name="description" content="Track usage-limit resets and quota changes for Claude Code, Codex, and Gemini CLI. Filter the signal, inspect the history, and get email alerts.">
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+  <meta property="og:title" content="AI Reset Watch — Claude, Codex &amp; Gemini Reset Signals">
+  <meta property="og:description" content="Track public reset and quota-change signals for Claude Code, Codex, and Gemini CLI.">
+  <meta property="og:image" content="https://resets.alexshen.dev/og-image.png">
+  <meta property="og:image:secure_url" content="https://resets.alexshen.dev/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AI Reset Watch — Know when the limits move">
+  <meta property="og:url" content="https://resets.alexshen.dev/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AI Reset Watch">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AI Reset Watch — Claude, Codex &amp; Gemini Reset Signals">
+  <meta name="twitter:description" content="Track public reset and quota-change signals for Claude Code, Codex, and Gemini CLI.">
+  <meta name="twitter:image" content="https://resets.alexshen.dev/og-image.png">
+  <meta name="twitter:image:alt" content="AI Reset Watch — Know when the limits move">
+  <link rel="canonical" href="https://resets.alexshen.dev/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#151713">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <!-- STATIC_SCHEMA_START --><!-- STATIC_SCHEMA_END -->
+</head>
+<body>
+  <div class="ambient-grid" aria-hidden="true"></div>
+
+  <div class="site-shell">
+    <header class="masthead">
+      <nav class="nav" aria-label="Primary navigation">
+        <a class="brand" href="/" aria-label="AI Reset Watch home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>AI Reset Watch</span>
+        </a>
+        <div class="nav-links">
+          <a href="#signals">Signals</a>
+          <a href="#events">History</a>
+          <a href="#timing">Patterns</a>
+          <a href="#pace-calc">Pace</a>
+        </div>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"></path>
+          </svg>
+        </button>
+      </nav>
+
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="live-pulse"></span> Independent quota intelligence</p>
+          <h1>Know when the<br><em>limits move.</em></h1>
+          <p class="hero-lede">A focused record of usage resets and quota-policy changes across Claude Code, Codex, and Gemini CLI—without the rumor mill.</p>
+          <div class="hero-meta">
+            <span id="hero-updated"><!-- STATIC_UPDATED_START --><!-- STATIC_UPDATED_END --></span>
+            <span aria-hidden="true">/</span>
+            <span>No account connection required</span>
+          </div>
+        </div>
+
+        <section class="alert-panel" id="subscribe" aria-labelledby="subscribe-title">
+          <div class="alert-panel-head">
+            <span class="alert-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+                <path d="M10 21h4"></path>
+              </svg>
+            </span>
+            <div>
+              <p class="panel-label">Email alerts</p>
+              <h2 id="subscribe-title">Get the next signal.</h2>
+            </div>
+          </div>
+          <p class="alert-description">We’ll email you only when a new tracked reset or quota change appears.</p>
+
+          <form class="subscribe-form" id="subscribe-form">
+            <fieldset class="topic-picker">
+              <legend>Alert me about</legend>
+              <label><input type="checkbox" name="topics" value="anthropic" checked><span>Claude</span></label>
+              <label><input type="checkbox" name="topics" value="openai" checked><span>Codex</span></label>
+              <label><input type="checkbox" name="topics" value="google" checked><span>Gemini</span></label>
+            </fieldset>
+
+            <label class="email-label" for="subscribe-email">Email address</label>
+            <div class="subscribe-controls">
+              <input id="subscribe-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" maxlength="254" required>
+              <button type="submit">
+                <span>Subscribe</span>
+                <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 10h12M11 5l5 5-5 5"></path></svg>
+              </button>
+            </div>
+
+            <input id="subscribe-website" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" hidden>
+            <p class="consent-copy">We’ll send a confirmation link first. By subscribing, you agree to receive the selected alerts. Read our <a href="/privacy.html">email privacy note</a>. Unsubscribe or change providers anytime.</p>
+            <p class="subscribe-status" id="subscribe-status" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+      </div>
+    </header>
+
+    <main>
+      <section class="signals-section" id="signals" aria-labelledby="signals-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">01 / Signals</p>
+            <h2 id="signals-title">The current picture</h2>
+            <p>Compare cadence and recency on one shared time window.</p>
+          </div>
+          <div class="control-dock" aria-label="Signal filters">
+            <div class="filter-group" id="vendor-chips">
+              <span class="filter-label">Providers</span>
+            </div>
+            <div class="filter-group">
+              <span class="filter-label">Window</span>
+              <div class="segmented" id="window-segmented" role="group" aria-label="Date range">
+                <button data-window="last_7d">7d</button>
+                <button data-window="last_30d">30d</button>
+                <button data-window="last_90d">90d</button>
+                <button data-window="all_time">All</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="vendor-grid" id="vendor-sections">
+          <!-- STATIC_VENDOR_CARDS_START --><!-- STATIC_VENDOR_CARDS_END -->
+        </div>
+      </section>
+
+      <section class="events-section" id="events" aria-labelledby="events-title">
+        <div class="section-heading events-heading">
+          <div>
+            <p class="section-index">02 / History</p>
+            <h2 id="events-title">Latest moves</h2>
+            <p>Verified announcements in the current provider and time filters. Exact times use Pacific Time (PST/PDT).</p>
+          </div>
+          <span class="event-count" id="events-count"><!-- STATIC_EVENT_COUNT_START --><!-- STATIC_EVENT_COUNT_END --></span>
+        </div>
+        <div class="events-list" id="events-list"><!-- STATIC_EVENTS_START --><!-- STATIC_EVENTS_END --></div>
+        <button class="events-toggle" id="events-toggle" type="button" hidden>Show all events</button>
+      </section>
+
+      <section class="timing-section" id="timing" aria-labelledby="timing-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">03 / Pattern</p>
+            <h2 id="timing-title">When Codex moves</h2>
+            <p>Tracked OpenAI announcements by weekday and Pacific time. A visible cluster is a clue, not a schedule.</p>
+          </div>
+          <a class="method-link" href="/methodology.html#timing">How this is calculated ↗</a>
+        </div>
+        <div id="timing-insight" class="timing-insight">
+          <!-- STATIC_TIMING_START --><!-- STATIC_TIMING_END -->
+        </div>
+      </section>
+
+      <section class="calc" id="pace-calc" aria-labelledby="pace-title">
+        <div class="calc-intro">
+          <p class="section-index">04 / Tool</p>
+          <h2 id="pace-title">Quota pace</h2>
+          <p>Estimate how much of a reset window you should have used by now. It’s a planning aid—not a prediction of the next reset.</p>
+          <div class="ring-wrap">
+            <svg id="calc-ring" viewBox="0 0 160 160" width="160" height="160" aria-label="Quota pace target">
+              <circle class="ring-track" cx="80" cy="80" r="68"></circle>
+              <circle class="ring-arc ring-arc-target" id="ring-target-arc" cx="80" cy="80" r="68"></circle>
+              <circle class="ring-track ring-track-inner" cx="80" cy="80" r="52"></circle>
+              <circle class="ring-arc ring-arc-actual" id="ring-actual-arc" cx="80" cy="80" r="52"></circle>
+            </svg>
+            <div class="ring-center">
+              <div class="ring-figure"><span id="calc-target-figure">—</span><span class="ring-unit">%</span></div>
+              <div class="ring-caption">target now</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="calc-fields">
+          <div class="calc-grid">
+            <div class="field field-wide">
+              <label for="calc-vendor">Window preset</label>
+              <select id="calc-vendor">
+                <option value="anthropic-week">Claude — weekly window (7d)</option>
+                <option value="anthropic-5h">Claude — 5-hour window</option>
+                <option value="openai-week">Codex — weekly-ish window (7d)</option>
+                <option value="gemini-day">Gemini — daily window (1d)</option>
+                <option value="custom">Custom window</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="calc-window-days">Window length <span>days</span></label>
+              <input type="number" id="calc-window-days" min="0.01" step="0.01" value="7">
+            </div>
+            <div class="field field-wide">
+              <label for="calc-last-reset">Your last reset <span>Pacific Time (PST/PDT)</span></label>
+              <input type="datetime-local" id="calc-last-reset">
+            </div>
+            <div class="field">
+              <label for="calc-target-rate">Target use <span>%</span></label>
+              <input type="number" id="calc-target-rate" min="1" max="100" value="95">
+            </div>
+            <div class="field field-wide">
+              <label for="calc-actual">Current usage <span>optional %</span></label>
+              <input type="number" id="calc-actual" min="0" max="200" placeholder="e.g. 62">
+            </div>
+          </div>
+          <div class="calc-result">
+            <p class="calc-detail" id="calc-detail">Set your last reset to calculate a target.</p>
+            <p class="calc-formula" id="calc-formula"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer id="footer">
+      <div class="footer-brand">
+        <span class="brand-mark small" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>AI Reset Watch</span>
+      </div>
+      <div id="footer-meta"></div>
+      <div class="footer-links">
+        <a href="/methodology.html">Methodology</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="#subscribe">Subscribe</a>
+      </div>
+    </footer>
+  </div>
+
+  <div id="tooltip"></div>
+  <script src="analytics.js"></script>
+  <script src="time.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

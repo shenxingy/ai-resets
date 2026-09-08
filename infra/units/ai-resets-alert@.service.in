@@ -1,0 +1,61 @@
+[Unit]
+# Mail the operator that a unit failed. Named from another unit's OnFailure=,
+# with %n so the instance is the failing unit's own name:
+#
+#   [Unit]
+#   OnFailure=ai-resets-alert@%n.service
+#
+# on ai-resets-probe.service (and on the Claude probe unit when it lands).
+# After a recovery, re-arm it by hand:
+#
+#   python3 scripts/subscriptions.py alert --unit ai-resets-probe.service --clear
+#
+# THE RESTART LOOP IS THE WHOLE PROBLEM. systemd fires OnFailure= on every
+# restart cycle, and ai-resets-probe.service carries Restart=always with
+# RestartSec=10, so a unit that simply mailed on each trigger would send 8,640
+# messages a day for one outage. The dedupe is therefore not in this file: it
+# is in the owner_alerts table the notifier already uses for probe blindness,
+# keyed by unit name, with one reminder every six hours while the failure
+# lasts. This unit is safe to trigger as often as systemd likes.
+Description=Mail the AI Reset Watch operator that %i failed
+Documentation=__PUBLIC_URL__
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__AI_RESETS_USER__
+Group=__AI_RESETS_GROUP__
+WorkingDirectory=__AI_RESETS_REPO__
+# The same two credentials the notifier uses: the Resend key to send, and the
+# signing secret because the idempotency key is an HMAC of the condition.
+LoadCredentialEncrypted=RESEND_API_KEY
+LoadCredentialEncrypted=SUBSCRIPTION_SECRET
+# OWNER_EMAIL lives here. The leading `-` keeps the unit optional-safe: with no
+# file the alert is printed to the journal instead of mailed, and the unit
+# still exits 0.
+EnvironmentFile=-/etc/ai-resets/notify.env
+# The sending identity. Required now that no address is compiled in, so a
+# deployment can never mail as somebody else's domain. Optional-loaded (`-`)
+# so a missing file does not stop the unit; the script then says what is absent.
+EnvironmentFile=-/etc/ai-resets/service.env
+ExecStart=/usr/bin/python3 __AI_RESETS_REPO__/scripts/subscriptions.py alert --unit %i
+# A failing alert unit is noise on top of an outage, so the command exits 0
+# whenever the mail cannot be sent and writes the reason to the journal. This
+# bound only stops a hung TLS connect from holding a systemd job open.
+TimeoutStartSec=90
+
+StateDirectory=ai-resets
+StateDirectoryMode=0700
+UMask=0077
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=read-only
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true

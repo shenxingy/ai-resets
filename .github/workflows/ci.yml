@@ -1,0 +1,55 @@
+# The gate for changes that arrive from outside.
+#
+# The maintainer's own gate is a full local run — it answers in under a minute
+# and needs no push. What a hosted runner adds, and the only reason this file
+# exists, is the two things a local run cannot give: a clean machine with no
+# state from previous runs, and a safe place to execute a pull request from
+# somebody whose laptop is not trusted.
+#
+# Everything here is the Python standard library, so there is nothing to
+# install and no lockfile to keep current.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only. This workflow builds and tests; it has no reason to write to the
+# repository, and a token that cannot write cannot be talked into writing.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests
+
+      # The suite again, traced, with a per-module floor. Slower than the plain
+      # run above and reported separately so a coverage regression and a broken
+      # test never arrive as the same red X.
+      - name: Coverage floors
+        run: python3 scripts/coverage_gate.py
+
+      # A clean clone has no fetched data, only the tracked seeds. This proves
+      # the site still builds and passes its own checks from nothing but what
+      # is committed — the property that breaks silently when a generated file
+      # quietly becomes a required input.
+      - name: Build the site from a clean checkout
+        run: |
+          python3 scripts/build.py
+          python3 scripts/check_site.py
+
+      - name: No secrets in the tree
+        run: |
+          if grep -rIn --exclude-dir=.git -E 'phc_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY' .; then
+            echo "::error::a key-shaped string is committed"
+            exit 1
+          fi

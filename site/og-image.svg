@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f2efe6"/>
+  <path d="M0 0h1200v630H0z" fill="none" stroke="#d8d3c7"/>
+  <g opacity=".28" stroke="#b8b2a5">
+    <path d="M0 90h1200M0 180h1200M0 270h1200M0 360h1200M0 450h1200M0 540h1200"/>
+    <path d="M120 0v630M240 0v630M360 0v630M480 0v630M600 0v630M720 0v630M840 0v630M960 0v630M1080 0v630"/>
+  </g>
+  <rect x="62" y="60" width="1076" height="510" rx="34" fill="#151713"/>
+  <g transform="translate(110 108)">
+    <rect x="0" y="12" width="13" height="16" rx="2" fill="#e75e43"/>
+    <rect x="20" y="0" width="13" height="28" rx="2" fill="#008e6d"/>
+    <rect x="40" y="7" width="13" height="21" rx="2" fill="#3d67e8"/>
+    <text x="78" y="20" fill="#f7f7ee" font-family="Arial,sans-serif" font-size="28" font-weight="700">AI Reset Watch</text>
+  </g>
+  <text x="110" y="280" fill="#f7f7ee" font-family="Georgia,serif" font-size="82" font-weight="700">Know when the</text>
+  <text x="110" y="368" fill="#c9ff4a" font-family="Georgia,serif" font-size="82" font-style="italic" font-weight="700">limits move.</text>
+  <text x="110" y="455" fill="#a9ada1" font-family="Arial,sans-serif" font-size="28">Quota and reset signals for Claude Code, Codex &amp; Gemini CLI.</text>
+  <g transform="translate(110 505)">
+    <circle cx="8" cy="8" r="8" fill="#c9ff4a"/>
+    <text x="28" y="16" fill="#f7f7ee" font-family="monospace" font-size="20">LIVE SIGNAL TRACKING</text>
+  </g>
+</svg>

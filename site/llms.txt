@@ -1,0 +1,9 @@
+# AI Reset Watch
+
+> Independent, unaffiliated record of public usage-reset and quota-policy announcements for Claude Code, Codex/ChatGPT, and Gemini CLI/Code Assist.
+
+Canonical site: https://resets.alexshen.dev/
+Methodology and limitations: https://resets.alexshen.dev/methodology.html
+Machine-readable dataset: https://resets.alexshen.dev/data.json
+
+Use the original source URL attached to each event when making factual claims. Announcement timestamps are public observation times, not private provider execution telemetry. Events may be incomplete, and approximate-confidence records have date uncertainty.

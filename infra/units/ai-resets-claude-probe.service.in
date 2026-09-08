@@ -1,0 +1,63 @@
+[Unit]
+Description=AI Reset Watch ground-truth Claude Code quota probe
+Documentation=__PUBLIC_URL__
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# A long-running loop rather than a timer, for the same reason the Codex probe
+# is one: systemd's monotonic timers drift, and the 300s cadence here is a
+# rate-limit budget rather than a preference. The loop also holds the throttle
+# ladder in memory, and re-reads it from probe_health.json when it is restarted.
+Type=simple
+User=__AI_RESETS_USER__
+Group=__AI_RESETS_GROUP__
+WorkingDirectory=__AI_RESETS_REPO__
+Environment=AI_RESETS_STATE=/var/lib/ai-resets
+# The floor is enforced in code (claude_probe.MIN_POLL_SECONDS): this variable
+# can only make the interval LONGER. Measured: /api/oauth/usage throttles per
+# token at roughly 25-30 requests per 15 minutes with a persistent 429, and a
+# probe polling it every 20s locked both accounts out of their own /usage page.
+Environment=AI_RESETS_CLAUDE_POLL_SECONDS=300
+# Named explicitly rather than left to the defaults in the script, so that
+# moving a profile is a change to this file and not a silent switch to an
+# account nobody meant to probe.
+Environment=AI_RESETS_CLAUDE_CREDS_A=__CLAUDE_CREDS_A__
+Environment=AI_RESETS_CLAUDE_CREDS_B=__CLAUDE_CREDS_B__
+ExecStart=/usr/bin/python3 __AI_RESETS_REPO__/scripts/claude_probe.py
+Restart=always
+# Longer than the Codex probe's 10s. A restart here costs a request against a
+# per-token budget of roughly 100 an hour, and the failures worth restarting
+# for (network, a 5xx) do not clear in ten seconds.
+RestartSec=60
+
+StateDirectory=ai-resets
+StateDirectoryMode=0700
+UMask=0077
+
+# The credential files are READ, never written: this process never refreshes an
+# OAuth token, because refresh tokens rotate and a refresh from here would log
+# the owner out of their own editor. So there is deliberately NO ReadWritePaths
+# entry for ~/.claude or ~/.claude-profiles.
+#
+# ProtectHome=read-only, NOT tmpfs: tmpfs hides /home entirely, which hides the
+# repository this unit's ExecStart points at, and the service would not start.
+ProtectHome=read-only
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+# AF_INET/AF_INET6 for the HTTPS call to api.anthropic.com; AF_UNIX for the
+# journal socket.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+
+# P4 adds the OnFailure= alert unit, alongside the Codex probe's. Until then
+# `PROBE EXITING` in the journal plus a health block that stops being updated
+# are what say this went dark.
+
+[Install]
+WantedBy=multi-user.target

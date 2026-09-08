@@ -1,0 +1,10 @@
+[Unit]
+Description=Check AI Reset Watch for notification-worthy events
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=ai-resets-notify.service
+
+[Install]
+WantedBy=timers.target
