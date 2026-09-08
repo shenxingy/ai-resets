@@ -171,17 +171,30 @@ class PublishScriptTest(unittest.TestCase):
             result.stdout.index("[publish] build"),
         )
 
-    def test_a_fresh_clone_with_no_cached_feed_still_publishes(self):
-        # data/openai.json is gitignored, so a fresh clone has no cache. With
-        # the tracker also down there is no announcement inside build.py's
-        # 30-day window, which used to abort check_site.py and take the whole
-        # tick with it — the exact case P0d claims to survive.
-        # Not just the OpenAI cache: with the Anthropic fetcher shipping, that
-        # vendor now carries recent announcements of its own, so removing one
-        # feed no longer produces a page with nothing inside the window.
-        for stale in (self.repo / "data").glob("*.json"):
-            stale.unlink()
-        (self.repo / "scripts" / "fetch_anthropic.py").unlink(missing_ok=True)
+    def test_a_quiet_month_still_publishes(self):
+        # Nothing inside build.py's 30-day window: every fetcher is down and
+        # every tracked announcement has aged out. This used to abort
+        # check_site.py and take the whole tick with it, and it is the exact
+        # case the soft-failure contract claims to survive.
+        #
+        # The vendors themselves stay. An earlier version of this test deleted
+        # `data/*.json` outright to reach the empty state, which also deleted
+        # the TRACKED seeds — and a fresh clone has those, so the scenario was
+        # one that cannot occur. It passed anyway on the maintainer's machine,
+        # where the optional discovery steps have network and credentials and
+        # quietly wrote the files back; on a clean runner with neither, the
+        # page came out with no vendor cards at all and check_site refused it.
+        # Ageing the events models the real thing and keeps the cards.
+        old = (datetime.now(timezone.utc) - timedelta(days=120)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for seed in (self.repo / "data").glob("*.json"):
+            payload = json.loads(seed.read_text(encoding="utf-8"))
+            for event in payload.get("events") or []:
+                event["announced_at"] = old
+            seed.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # No discovery either: with these present they would fetch today's news
+        # back and there would be nothing quiet about the month.
+        for script in ("fetch_anthropic.py", "discover_posts.py", "claude_probe.py"):
+            (self.repo / "scripts" / script).unlink(missing_ok=True)
         result = self.publish(self.stub("soft", STUB_SOFT_FAIL))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("published site/ ->", result.stdout)
