@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Refresh data + publish the static site.
 #
-# Intended to run from the five-minute user cron on the host serving
-# resets.alexshen.dev. Override AI_RESETS_DEPLOY_TARGET for another docroot.
+# Intended to run from a five-minute user cron on the host serving the site.
+# Override AI_RESETS_DEPLOY_TARGET for another docroot; put anything else the
+# host needs in /etc/ai-resets/publish.env, which is sourced below if present.
 #
 # Step policy (P0d, extended in P3): the EXPORT and FETCH steps are non-fatal,
 # the BUILD and CHECK steps stay fatal. A third-party tracker being unreachable
@@ -17,6 +18,20 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Host settings for the publish itself, if the host has any. The cron line
+# passes one variable and should not grow into a place where configuration
+# accumulates; systemd units read /etc/ai-resets/service.env, and this is the
+# equivalent for the half of the system that runs from cron rather than under
+# systemd. Optional by design: absent on a laptop, absent in CI, absent in the
+# tests, and the publish behaves identically without it.
+PUBLISH_ENV="${AI_RESETS_PUBLISH_ENV:-/etc/ai-resets/publish.env}"
+if [ -r "$PUBLISH_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$PUBLISH_ENV"
+  set +a
+fi
 DEPLOY_TARGET="${AI_RESETS_DEPLOY_TARGET:-/srv/ai-resets}"
 # Path (not a command line) so the override cannot smuggle in extra arguments;
 # tests/test_publish.py points it at a stub to exercise the failure branch.

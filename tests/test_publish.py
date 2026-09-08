@@ -101,6 +101,12 @@ class PublishScriptTest(unittest.TestCase):
     def publish(self, fetcher):
         env = dict(os.environ)
         env["AI_RESETS_DEPLOY_TARGET"] = str(self.deploy)
+        # Point this at the temp tree, always. Left alone it defaults to
+        # /etc/ai-resets/publish.env, and a suite whose result depends on a
+        # file outside the repository is a suite that passes on the maintainer's
+        # host and fails on a clean runner — which is exactly how the quiet-month
+        # test went wrong.
+        env["AI_RESETS_PUBLISH_ENV"] = str(self.tmp / "publish.env")
         env["AI_RESETS_FETCH_OPENAI"] = str(fetcher)
         # Belt and braces: a bug in this harness must never reach the live
         # docroot or the live checkout.
@@ -170,6 +176,35 @@ class PublishScriptTest(unittest.TestCase):
             result.stdout.index("anthropic feed refreshed"),
             result.stdout.index("[publish] build"),
         )
+
+    def test_a_host_env_file_is_sourced_and_reaches_the_build(self):
+        # The whole point of the file: a setting the cron line does not carry.
+        # Asserting on the rendered analytics proves it travelled all the way
+        # from the file into build.py's environment, not merely that bash read
+        # a line.
+        (self.tmp / "publish.env").write_text(
+            "AI_RESETS_POSTHOG_KEY=phc_from_the_host_env_file\n", encoding="utf-8"
+        )
+        result = self.publish(self.stub("soft", STUB_SOFT_FAIL))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        analytics = (self.deploy / "analytics.js").read_text(encoding="utf-8")
+        self.assertIn("phc_from_the_host_env_file", analytics)
+        self.assertIn("// ai-resets-analytics: enabled", analytics)
+
+    def test_no_host_env_file_leaves_analytics_off(self):
+        # The default everywhere except the one host that opts in.
+        result = self.publish(self.stub("soft", STUB_SOFT_FAIL))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        analytics = (self.deploy / "analytics.js").read_text(encoding="utf-8")
+        self.assertIn("// ai-resets-analytics: disabled", analytics)
+        self.assertNotIn("phc_", analytics)
+
+    def test_the_env_file_is_never_deployed(self):
+        # It lives in /etc, but a host that put one in the repo by mistake must
+        # not have it rsynced into a public docroot.
+        (self.tmp / "publish.env").write_text("AI_RESETS_POSTHOG_KEY=phc_x\n", encoding="utf-8")
+        self.publish(self.stub("soft", STUB_SOFT_FAIL))
+        self.assertFalse((self.deploy / "publish.env").exists())
 
     def test_a_quiet_month_still_publishes(self):
         # Nothing inside build.py's 30-day window: every fetcher is down and

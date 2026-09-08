@@ -1863,6 +1863,12 @@ class PublishExportStepTest(unittest.TestCase):
     def publish(self, exporter=None):
         env = dict(os.environ)
         env["AI_RESETS_DEPLOY_TARGET"] = str(self.tmp / "docroot")
+        # Point this at the temp tree, always. Left alone it defaults to
+        # /etc/ai-resets/publish.env, and a suite whose result depends on a
+        # file outside the repository is a suite that passes on the maintainer's
+        # host and fails on a clean runner — which is exactly how the quiet-month
+        # test went wrong.
+        env["AI_RESETS_PUBLISH_ENV"] = str(self.tmp / "publish.env")
         env["AI_RESETS_STATE"] = str(self.tmp / "state")
         env["AI_RESETS_FETCH_OPENAI"] = str(self.stub("noop", "pass\n"))
         if exporter is not None:

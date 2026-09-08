@@ -137,7 +137,9 @@ cron tick.
 **Analytics is off unless you switch it on.** `site/analytics.template.js` has
 no key in it. Set `AI_RESETS_POSTHOG_KEY` to your own project key and `build.py`
 renders the beacon; leave it unset and it writes an inert file so the pages that
-reference it do not 404. The beacon uses no SDK, cookies, local storage, session
+reference it do not 404. On a host that publishes from cron, put the key in
+`/etc/ai-resets/publish.env` (see `infra/publish.env.example`) rather than on
+the cron line. The beacon uses no SDK, cookies, local storage, session
 replay, query strings, form values, persistent profile or GeoIP enrichment, and
 honours GPC and DNT. `check_site.py` enforces all of that on every publish.
 
