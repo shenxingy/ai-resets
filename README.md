@@ -8,7 +8,8 @@ Most trackers can only repeat what a vendor said. This one also **measures**:
 probes read the maintainer's own subscription quota straight from the vendor
 APIs, so a window that clears can be told apart from a window that merely
 expired on schedule. When an announcement and a measurement agree, the site
-says so; when a reset is measured that nobody announced, it still shows up.
+can report the timing. An early account clear alone never confirms or
+originates a public reset: personal redemption must first be ruled out.
 
 Live at the address in [`site.config.json`](site.config.json).
 
@@ -35,7 +36,7 @@ Two measured examples, both from this project's own logs:
 
 | What happened | Gap |
 |---|---|
-| A vendor reset observed on this account before the announcement post | 149 s early |
+| An account clear observed before a reset announcement post | 149 s early |
 | A banked-credit announcement, versus the credit actually landing | 3 h 41 m late |
 
 Announcements also go missing. A reset announced somewhere other than the
@@ -44,7 +45,7 @@ not a hypothetical: it is why the probes exist.
 
 So `quota_probe.py` (OpenAI) and `claude_probe.py` (Anthropic) read the
 operator's own authenticated quota — metadata only, consuming no tokens and no
-reset credit — and time resets directly. They are **observation-only and never
+reset credit — and time account clears directly. They are **observation-only and never
 send mail**.
 
 Three measured facts drive the detection logic:
@@ -52,14 +53,17 @@ Three measured facts drive the detection logic:
 1. **The two vendors have different window contracts.** Codex re-anchors
    `resets_at` on a real clear; Anthropic keeps a fixed per-account weekly
    lattice. The detector records which happened at detection time, so a single
-   revert rule serves both. Getting this wrong once caused a confirmed reset to
+   revert rule serves both. Getting this wrong once caused a persistent clear to
    be retracted.
 2. **The discriminator is the clear time against the window's active anchor.**
    A clear at or after the scheduled expiry is the window ending; a clear
    materially before it was forced.
-3. **A forced clear is still ambiguous** between "the operator spent a banked
-   credit" and "the vendor reset everyone". The credit counter in the live API
-   decrements only in the first case, so the two separate locally.
+3. **A forced clear is still ambiguous** between personal reset use and a
+   vendor action. OpenAI's Bank count is a balance, not a redemption history:
+   grants, spending and expiry can overlap between polls. Claude's personal
+   limit resets can restore weekly limits too, and its usage response does not
+   expose a redemption ledger. Neither an unchanged Bank count nor two accounts
+   clearing together proves a provider-wide reset.
 
 A clear must persist across two polls before it is trusted: on one occasion a
 weekly window went 91% to 0% in 3.7 s, held for 12 h 41 m, and then reverted
@@ -71,19 +75,29 @@ completes. Google has no probe yet.
 
 ## What the verdicts mean
 
-Every observed clear gets exactly one verdict, and only some are ever
-published:
+The probes record account observations separately from vendor announcements.
+Confirmation across polls proves that a clear persisted, not who caused it.
 
 | Verdict | Meaning | Published |
 |---|---|---|
-| `vendor_reset` | Cleared early, no banked credit was spent — a real reset | yes |
 | `natural_expiry` | Cleared at or after the scheduled expiry | yes |
-| `unresolved` | Cleared, but no anchor was on record to judge against | yes |
-| `self_applied_credit` | The operator spent their own banked credit | **no** |
+| `unresolved` | Cleared early with an unverified cause, or no expiry anchor | **no** |
+| `self_applied` | Bank count fell across the clear; possible personal reset use | **no** |
 
-The fourth is withheld because it describes what one person did with their own
-account and says nothing about the vendor. Publishing it would be both wrong
-and private.
+Legacy `global_candidate` records now export as `unresolved`, so historical
+logs cannot bypass this rule. The raw-log reader used by announcement and
+email annotations shares the exporters' verdict map. Account-only clears
+never mark an announcement confirmed, originate a public reset, or enter
+public reset counts. Private samples and event logs are retained for review.
+
+A Bank credit grant is a separate event from a quota clear. Timing a grant
+near an official announcement is only a timing match, not proof of causation
+or a reset of anyone's quota. Public announcements remain visible as claims
+by their sources, with the scope those sources state.
+
+Official contracts: [OpenAI reset Bank and redemption](https://learn.chatgpt.com/docs/app-server)
+and [Claude personal limit resets](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset).
+Neither probe redeems a credit while monitoring.
 
 ## Layout
 

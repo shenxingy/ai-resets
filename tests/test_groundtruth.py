@@ -17,6 +17,7 @@ from scripts.groundtruth import (
     probed_vendors,
     VERDICT_SELF,
     VERDICT_VENDOR,
+    VERDICT_UNRESOLVED,
     clear_observations,
     credit_grant_since,
     observation_near,
@@ -275,7 +276,7 @@ class ObservedClearTests(StateDirCase):
     def test_the_three_kinds_are_told_apart(self):
         self.write_events([self.VENDOR, self.SELF])
         verdicts = {o["t"]: o["verdict"] for o in clear_observations(self.state)}
-        self.assertEqual(verdicts[self.VENDOR["detected_at"]], VERDICT_VENDOR)
+        self.assertEqual(verdicts[self.VENDOR["detected_at"]], VERDICT_UNRESOLVED)
         self.assertEqual(verdicts[self.SELF["detected_at"]], VERDICT_SELF)
 
     def test_a_retracted_clear_is_not_evidence(self):
@@ -294,31 +295,21 @@ class ObservedClearTests(StateDirCase):
         self.write_events([self.SELF])
         self.assertIsNone(observation_near(self.SELF["detected_at"], self.state))
 
-    def test_an_observation_before_the_post_still_matches(self):
-        # The normal case: a rollout reaches this account before the vendor
-        # gets round to posting about it.
+    def test_timing_before_a_post_does_not_establish_the_clear_cause(self):
         self.write_events([self.VENDOR])
-        found = observation_near(self.POST, self.state)
-        self.assertIsNotNone(found)
-        self.assertEqual(found["t"], self.VENDOR["detected_at"])
+        self.assertIsNone(observation_near(self.POST, self.state))
 
     def test_an_observation_outside_the_window_does_not_match(self):
         self.write_events([self.VENDOR])
         self.assertIsNone(observation_near(self.POST + 7 * 3600, self.state))
 
-    def test_the_email_states_the_verdict_and_the_lead_time(self):
+    def test_the_email_does_not_confirm_a_reset_from_account_only_data(self):
         self.write_events([self.VENDOR])
         result = self.line(kind="reset", announced_at=self.POST)
-        self.assertEqual(result["verdict"], VERDICT_VENDOR)
-        line = result["line"]
-        self.assertIn("Observed on our Pro account", line)
-        self.assertIn("before this post", line)
-        self.assertIn("16% to 0%", line)
-        self.assertIn("before its scheduled expiry", line)
-        self.assertIn("Nothing this account did explains it", line)
-        # The claim stays bounded: never "the vendor reset everyone".
-        self.assertNotIn("everyone", line)
-        self.assertNotIn("no reset", line.lower())
+        self.assertNotIn("verdict", result)
+        self.assertIn("Not observed", result["line"])
+        self.assertNotIn("Nothing this account did explains it", result["line"])
+        self.assertNotIn("16% to 0%", result["line"])
 
     def test_without_a_matching_observation_it_falls_back_to_not_observed(self):
         self.write_events([self.SELF])
@@ -379,12 +370,12 @@ class ClaudeObservationTests(StateDirCase):
             "\n".join(json.dumps(r) for r in records) + "\n"
         )
 
-    def test_a_claude_reset_the_probe_saw_is_reported_as_observed(self):
+    def test_a_claude_account_clear_does_not_confirm_the_announcement(self):
         self.claude_events([self.CLEAR])
         result = self.line("anthropic", kind="reset", announced_at=self.POST)
-        self.assertEqual(result.get("verdict"), VERDICT_VENDOR)
-        self.assertIn("Observed on our Max 20x accounts", result["line"])
-        self.assertIn("48% to 0%", result["line"])
+        self.assertNotIn("verdict", result)
+        self.assertIn("Not observed on our Max 20x accounts", result["line"])
+        self.assertNotIn("48% to 0%", result["line"])
 
     def test_accounts_that_disagree_cannot_confirm_an_announcement(self):
         # The probe withholds this from its own export. Reading the raw event

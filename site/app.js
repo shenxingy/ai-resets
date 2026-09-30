@@ -35,9 +35,7 @@ const FORECAST_LOW_CONFIDENCE = 15; // fewer than this (e.g. Anthropic's 8) → 
 // describe what the account owner did, and build.py never puts them in
 // data.json in the first place.
 const VERDICT_LABELS = {
-  vendor_reset: "Cleared early · unexplained",
   natural_expiry: "Scheduled expiry",
-  unresolved: "Cannot tell",
   limit_change: "Limits rescaled",
 };
 const PROBE_STALE_SECONDS = 900;
@@ -383,7 +381,7 @@ function renderForecastNote(forecast) {
 }
 
 function renderObservations(vendor) {
-  const rows = vendor.observations || [];
+  const rows = (vendor.observations || []).filter(row => VERDICT_LABELS[row.verdict]);
   if (!rows.length) return null;
   const shown = rows.slice(0, OBSERVATIONS_SHOWN);
 

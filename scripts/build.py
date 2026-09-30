@@ -90,11 +90,12 @@ OBSERVED_DIR = DATA_DIR / "observed"
 # `credit_granted` are deliberately absent: they say what the OWNER did with
 # their own account, not what the vendor did, and are never published.
 VERDICT_LABELS = {
-    "vendor_reset": "Cleared early · unexplained",
     "natural_expiry": "Scheduled expiry",
-    "unresolved": "Cannot tell",
     "limit_change": "Limits rescaled",
 }
+# Reject stale exports too: an older exporter may still have marked an early
+# account clear public. Neither its flag nor its legacy vendor_reset verdict
+# supplies the missing evidence about personal redemption.
 PUBLIC_VERDICTS = frozenset(VERDICT_LABELS)
 
 # Whitelists, not blacklists. The probe export is written by another program on
@@ -245,7 +246,10 @@ def build_observations(vendor):
     same label vocabulary; tests/test_build.py fails if one side grows a term
     the other does not have.
     """
-    rows = vendor.get("observations") or []
+    rows = [
+        row for row in vendor.get("observations") or []
+        if row.get("verdict") in VERDICT_LABELS
+    ]
     if not rows:
         return ""
     shown = rows[:OBSERVATIONS_SHOWN]
@@ -259,11 +263,6 @@ def build_observations(vendor):
             if stamp
             else ""
         )
-        if verdict not in VERDICT_LABELS:
-            # Drop the row rather than raise. A KeyError here aborts the whole
-            # publish before the rsync, and an unknown verdict is exactly the
-            # row we least want to render.
-            continue
         lines = ""
         if row.get("headline"):
             lines += f'<p class="observation-headline">{html.escape(str(row["headline"]))}</p>'
@@ -727,8 +726,8 @@ def annotate_announcements(vendors, state_dir=None):
     already shows what a vendor SAID; without this it never shows whether that
     reached a real account, which is the only part we can actually check.
 
-    An announcement is only ever marked confirmed by a `vendor_reset`
-    observation. A natural expiry says nothing about the vendor, and a
+    Confirmation requires a `vendor_reset` verdict. Current account probes
+    cannot supply that verdict: legacy global candidates are unresolved. A natural expiry says nothing about the vendor, and a
     self-applied clear says what the account holder did with their own banked
     credit — offering either as corroboration would be false and, in the second
     case, would publish something private.
