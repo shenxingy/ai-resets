@@ -700,7 +700,8 @@ class DetectionTests(unittest.TestCase):
         )
         self.assertEqual(first[0]["concordance"], cp.CONCORDANCE_UNKNOWN)
         self.assertEqual(second[0]["concordance"], cp.CONCORDANCE_AGREEING)
-        self.assertTrue(cp.is_public(second[0], set()))
+        self.assertFalse(cp.is_public(second[0], set()))
+        self.assertEqual(cp.verdict_of(second[0]), qp.VERDICT_UNRESOLVED)
 
     def test_one_account_clearing_while_the_other_stays_busy_is_a_disagreement(self):
         anchor = T0 + 3 * DAY
@@ -910,7 +911,7 @@ class CycleTests(StateDirTest):
             self.assertNotIn("accessToken", text, path.name)
             self.assertNotIn(FAKE_TOKEN, text, path.name)
 
-    def test_the_vendor_reset_reaches_the_export_as_a_public_row(self):
+    def test_early_clears_reach_the_private_export_with_an_unverified_cause(self):
         self.clear_run()
         out = self.state / "anthropic.json"
         cp.export_observations(out, now=T0 + 600)
@@ -918,9 +919,10 @@ class CycleTests(StateDirTest):
         self.assertEqual(payload["vendor"], "anthropic")
         self.assertEqual(payload["probe"]["status"], qp.PROBE_OK)
         public = [row for row in payload["observations"] if row["public"]]
-        self.assertTrue(public)
-        for row in public:
-            self.assertEqual(row["verdict"], qp.VERDICT_VENDOR_RESET)
+        self.assertEqual(public, [])
+        self.assertTrue(payload["observations"])
+        for row in payload["observations"]:
+            self.assertEqual(row["verdict"], qp.VERDICT_UNRESOLVED)
             self.assertEqual(row["window"], "weekly")
             # Everything build.py copies onto the site has to be present.
             for field in (
@@ -948,7 +950,9 @@ class CycleTests(StateDirTest):
             "organisation",
         ):
             self.assertNotIn(forbidden, text.lower(), forbidden)
-        self.assertIn("nothing this account did explains it", text)
+        self.assertIn("the cause is unverified", text)
+        self.assertNotIn("nothing this account did explains it", text)
+        self.assertIn("Personal limit resets can restore weekly limits too", text)
         self.assertIn("Two Max 20x accounts on one operator machine", text)
 
     def test_a_five_hour_clear_never_reaches_the_export(self):
@@ -1014,7 +1018,7 @@ class CycleTests(StateDirTest):
         self.assertIn("anthropic", gt.probed_vendors(self.state, now=T0 + 600))
         clears = gt.clear_observations(self.state, vendor="anthropic")
         self.assertTrue(clears)
-        self.assertEqual(clears[0]["verdict"], gt.VERDICT_VENDOR)
+        self.assertEqual(clears[0]["verdict"], gt.VERDICT_UNRESOLVED)
 
     def test_groundtruth_never_reads_a_five_hour_clear_as_a_vendor_reset(self):
         anchor = T0 + 4 * 3600

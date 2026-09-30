@@ -1203,11 +1203,9 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(payload["probe"]["status"], "ok")
         self.assertEqual(payload["probe"]["last_verified_at"], "1970-01-01T00:15:00Z")
 
-    def test_both_halves_of_the_question_are_publishable(self):
-        # The site has to be able to say "this one was just our window
-        # expiring" as well as "this one was a reset"; publishing only the
-        # reset direction answers half the question. What stays private is the
-        # verdict that describes the OWNER, not the vendor.
+    def test_only_scheduled_clears_are_publishable(self):
+        # Private credit use and ambiguous clears must never become public
+        # reset evidence, including records from before this policy change.
         payload = self.export(
             [
                 clear_event("a", qp.CLASS_GLOBAL),
@@ -1218,7 +1216,7 @@ class ExportTest(unittest.TestCase):
         )
         self.assertEqual(
             {o["event_id"]: o["public"] for o in payload["observations"]},
-            {"a": True, "b": False, "c": True, "d": True},
+            {"a": False, "b": False, "c": True, "d": False},
         )
 
     def test_a_clear_whose_credit_evidence_was_never_read_is_withheld(self):
@@ -1350,10 +1348,8 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(second["event_id"], first["event_id"])
         self.assertTrue(first["retracted"])
 
-    def test_a_reconstructed_global_clear_is_still_ranked_public(self):
-        # Records written before kind/event_id existed still carry the credit
-        # evidence their verdict rested on, so reconstruction is enough to
-        # publish them.
+    def test_a_reconstructed_global_clear_is_reclassified_as_private(self):
+        # An old record's unchanged balance is not a redemption ledger.
         payload = self.export(
             [
                 {
@@ -1366,7 +1362,8 @@ class ExportTest(unittest.TestCase):
                 }
             ]
         )
-        self.assertTrue(payload["observations"][0]["public"])
+        self.assertFalse(payload["observations"][0]["public"])
+        self.assertEqual(payload["observations"][0]["verdict"], "unresolved")
 
     def test_a_reconstructed_clear_without_credit_evidence_is_withheld(self):
         payload = self.export(
@@ -1433,8 +1430,8 @@ class VerdictTest(unittest.TestCase):
     def verdict(self, classification):
         return observe({**clear_event(), "classification": classification})["verdict"]
 
-    def test_a_global_candidate_is_published_as_a_vendor_reset(self):
-        self.assertEqual(self.verdict(qp.CLASS_GLOBAL), "vendor_reset")
+    def test_a_legacy_global_candidate_has_an_unresolved_cause(self):
+        self.assertEqual(self.verdict(qp.CLASS_GLOBAL), "unresolved")
 
     def test_the_other_three_classes_keep_their_names(self):
         self.assertEqual(self.verdict(qp.CLASS_NATURAL), "natural_expiry")
@@ -1483,30 +1480,31 @@ class SentenceTest(unittest.TestCase):
         row = observe(LIVE_2026_08_30)
         self.assertEqual(
             row["headline"],
-            "Our Codex weekly window cleared 5.9 days early, and nothing this "
-            "account did explains it.",
+            "Our Codex weekly window cleared 5.9 days early; the cause is unverified.",
         )
         self.assertEqual(
             row["evidence"],
             "16% to 0% between Aug 30, 2026, 5:42 PM PDT and Aug 30, 2026, "
             "7:26 PM PDT, at least 140.6 hours before its scheduled expiry of Sep 5, 2026, "
-            "4:02 PM PDT; the banked credit count was read on both sides (1 then 1) "
-            "and did not change.",
+            "4:02 PM PDT; the banked credit count was read on both sides (1 then 1)"
+            ", but a balance is not a redemption history. Personal reset use cannot be ruled "
+            "out. This is not evidence of a provider-wide reset.",
         )
-        self.assertTrue(row["public"])
+        self.assertFalse(row["public"])
 
     def test_a_vendor_reset_is_bounded_to_this_account(self):
         # The strongest claim available, and still not "the vendor reset
         # everyone": one Pro account on one plan tier cannot say that.
         row = observe(LIVE_2026_08_30)
-        self.assertIn("nothing this account did explains it", row["headline"])
+        self.assertIn("the cause is unverified", row["headline"])
+        self.assertIn("Personal reset use cannot be ruled out", row["evidence"])
         self.assertNotIn("everyone", row["headline"])
 
     def test_a_self_applied_clear_names_the_credit_that_explains_it(self):
         row = observe(
             {**LIVE_2026_08_30, "classification": qp.CLASS_SELF, "credits_after": 0}
         )
-        self.assertIn("this account spent a banked reset credit", row["headline"])
+        self.assertIn("possible personal reset-credit use", row["headline"])
         self.assertIn("fell from 1 to 0 across the clear", row["evidence"])
         self.assertFalse(row["public"])
 

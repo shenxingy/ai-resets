@@ -35,9 +35,9 @@ What differs from Codex, all measured on this host on 2026-09-05/06:
    window sits on a per-account 7-day lattice (recorded: 10:00:00 exactly),
    with about a second of jitter on `resets_at` — which is why anchors are
    compared through `quota_probe.same_anchor` and never with `==`. There is no
-   banked-credit bank, so classification cannot use credits at all: it rests
-   entirely on `early_by` against the anchor that was in force before the
-   clear. A vendor reset most likely zeroes the counter and KEEPS the anchor
+   reset-credit ledger in this usage response. Personal limit resets can
+   restore weekly limits too, so early_by cannot establish their cause.
+   A reset most likely zeroes the counter and KEEPS the anchor
    (n=1, inferred from the Sep 7 anchor surviving both missed resets), which
    is exactly the contract `is_revert()` handles with `reanchored=False`: the
    anchor says nothing, and only a snap-back to the pre-clear level retracts.
@@ -64,9 +64,9 @@ What differs from Codex, all measured on this host on 2026-09-05/06:
    readable and does NOT clear is `disagree`, which is an owner alert and is
    withheld from the public export rather than published as a vendor reset.
 
-The strongest claim this file will ever make is "our weekly window cleared
-early and nothing this account did explains it". Never "the vendor reset
-everyone"; never "no reset happened".
+An early weekly clear is unresolved and stays private. Two accounts agreeing
+does not exclude personal reset use on both. Official reset documentation:
+https://support.claude.com/en/articles/17007452-what-is-a-limit-reset
 """
 from __future__ import annotations
 
@@ -190,7 +190,7 @@ ACCOUNTS_PHRASE = "Two Max 20x accounts on one operator machine"
 
 # What may be shown to anyone but the owner. An allowlist: a classification
 # this build does not recognise must not become publishable by default.
-PUBLIC_CLASSIFICATIONS = (qp.CLASS_NATURAL, qp.CLASS_GLOBAL, qp.CLASS_UNRESOLVED)
+PUBLIC_CLASSIFICATIONS = qp.PUBLIC_CLASSIFICATIONS
 
 
 class ThrottledError(qp.ProbeError):
@@ -506,8 +506,8 @@ def normalise_usage(
                 "used_percent": float(percent),
                 "resets_at": parse_moment(entry.get("resets_at")),
                 "plan_type": plan_type,
-                # Anthropic has no banked reset credit to spend, so this field
-                # is structurally None and classify() can never reach its
+                # This usage response exposes no reset-redemption ledger, so
+                # classify() cannot identify personal redemption through its
                 # self_applied branch. The column stays so the row is exactly
                 # the shape quota_probe's helpers already read.
                 "credits_available": None,
@@ -657,8 +657,8 @@ def annotate(
             and isinstance(moment, int)
             and annotated.get("classification") == qp.CLASS_GLOBAL
         ):
-            # Only an EARLY clear nothing the account did explains can disagree
-            # about anything. The two accounts sit on different per-account
+            # Only EARLY clears are compared for account concordance. The two
+            # accounts sit on different per-account
             # 7-day lattices, so one's ordinary weekly expiry always lands
             # while the other's window is busy — the steady state. Recording
             # that as `accounts_disagree` would page the owner roughly weekly
@@ -667,17 +667,13 @@ def annotate(
                 claude_state, detector, str(row.get("account")), window_key(row), moment
             )
         if annotated.get("classification") == qp.CLASS_GLOBAL:
-            # The shared classifier explains an early clear as "the credit bank
-            # unchanged", which is the Codex evidence and is meaningless here:
-            # Anthropic has no bank to read. Restating it in the terms that
-            # actually apply keeps the owner's own event log from carrying a
-            # sentence nothing measured.
+            # Neither an early clear nor agreement between accounts proves
+            # its cause. Claude personal limit resets include weekly windows.
             annotated["detector_reason"] = annotated.get("reason")
             annotated["reason"] = (
                 f"cleared {annotated.get('early_by_seconds')}s before its scheduled "
-                "expiry; there is no banked reset credit on this vendor to spend and "
-                "/limit-reset clears only the 5-hour window, so nothing this account "
-                "did explains it"
+                "expiry; cause unverified. Personal limit resets can also restore "
+                "weekly limits, and this response contains no redemption ledger"
             )
     return annotated
 
@@ -887,8 +883,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
 
     Every clause prints a value that is on the record. The phrase "no reset
     happened" is never written: two correlated accounts on one plan tier cannot
-    say that, and the strongest claim available is that nothing this account
-    did explains what it saw.
+    say that. A clear can be timed, but personal reset use cannot be excluded.
     """
     reference = window_reference(event)
     subject = reference[0].upper() + reference[1:]
@@ -950,12 +945,12 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         # this: measured from the later end, which is the conservative one.
         gap = f"at least {hours} hours {gap}"
 
-    if verdict == qp.VERDICT_VENDOR_RESET:
+    if verdict == qp.VERDICT_UNRESOLVED and event.get("classification") == qp.CLASS_GLOBAL:
         return (
-            f"{subject} cleared {early} early, and nothing this account did explains it.",
-            f"{change} {moment}, {gap}. Claude Code has no banked reset credit for an "
-            "account holder to spend, and the /limit-reset command clears only the "
-            "5-hour window, so nothing this account could have done produces this. "
+            f"{subject} cleared {early} early; the cause is unverified.",
+            f"{change} {moment}, {gap}. Personal limit resets can restore weekly "
+            "limits too. This usage response has no redemption ledger, so personal "
+            "reset use cannot be ruled out. "
             f"{concordance_clause(event)}",
         )
 
@@ -978,8 +973,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
 def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     """May this observation be shown to anyone but the owner?
 
-    Four independent gates, because the cost of a wrong yes is publishing a
-    claim about a vendor we cannot defend:
+    Independent gates keep account activity from becoming a vendor claim:
 
     1. Only a confirmed CLEAR. A retraction is something we have withdrawn.
     2. Only a WEEKLY window. `session_only` is not in the allowlist, and the
@@ -987,8 +981,8 @@ def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
        classification was written before the gate existed still cannot pass.
     3. Only a classification in the allowlist, with an event id to check
        against the retraction log.
-    4. A vendor_reset that another readable account did NOT see is an owner
-       alert, not evidence. It stays in the owner's file.
+    Only scheduled weekly clears are currently allowed. Early clears stay
+    private even if both accounts agree: neither exposes a redemption ledger.
     """
     if event.get("kind") != qp.EVENT_CLEAR or not event.get("confirmed"):
         return False
@@ -997,11 +991,6 @@ def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     if event.get("classification") not in PUBLIC_CLASSIFICATIONS:
         return False
     if not event.get("event_id") or event.get("event_id") in retracted_ids:
-        return False
-    if (
-        event.get("classification") == qp.CLASS_GLOBAL
-        and event.get("concordance") == CONCORDANCE_DISAGREE
-    ):
         return False
     return True
 

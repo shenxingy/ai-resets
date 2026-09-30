@@ -64,7 +64,7 @@ def png_bytes(width: int, height: int) -> bytes:
     )
 
 
-VENDOR_LABEL = VERDICT_LABELS["vendor_reset"]
+OBSERVATION_LABEL = VERDICT_LABELS["limit_change"]
 
 INDEX = f"""<!doctype html>
 <html lang="en"><head>
@@ -78,7 +78,7 @@ INDEX = f"""<!doctype html>
 <section class="vendor static-vendor" data-vendor="openai">
   <span class="signal-status" data-probe="verified">Ground truth &middot; verified 3 min ago</span>
   <div class="observations">
-    <div class="observation"><span class="verdict">{VENDOR_LABEL}</span></div>
+    <div class="observation"><span class="verdict">{OBSERVATION_LABEL}</span></div>
     <p class="observation-note">Coverage: one Pro account, weekly window.</p>
   </div>
 </section>
@@ -126,7 +126,7 @@ DATA = {
     "vendors": {
         "openai": {
             "observations": [
-                {"verdict": "vendor_reset", "observed_at": "2026-08-30T19:26:00-07:00"},
+                {"verdict": "limit_change", "observed_at": "2026-08-30T19:26:00-07:00"},
                 {"verdict": "natural_expiry", "observed_at": "2026-08-29T19:26:00-07:00"},
             ]
         },
@@ -226,7 +226,7 @@ class GoldenSiteTests(SiteCheckCase):
         bare = (
             INDEX.replace('class="observations"', 'class="announcements"')
             .replace('class="observation-note"', 'class="source-note"')
-            .replace(VENDOR_LABEL, "Announcement only")
+            .replace(OBSERVATION_LABEL, "Announcement only")
         )
         self.run_check(**{"data.json": json.dumps(empty), "index.html": bare})
 
@@ -384,7 +384,7 @@ class ProbeBadgeTests(SiteCheckCase):
 
 class ObservationPrivacyTests(SiteCheckCase):
     def test_a_private_verdict_in_the_feed_fails(self):
-        for verdict in ("self_applied", "credit_granted"):
+        for verdict in ("self_applied", "credit_granted", "vendor_reset", "unresolved"):
             with self.subTest(verdict=verdict):
                 leaked = json.loads(json.dumps(DATA))
                 leaked["vendors"]["openai"]["observations"][0]["verdict"] = verdict
@@ -394,7 +394,7 @@ class ObservationPrivacyTests(SiteCheckCase):
                 )
 
     def test_a_private_verdict_in_the_page_fails(self):
-        for verdict in ("self_applied", "credit_granted"):
+        for verdict in ("self_applied", "credit_granted", "vendor_reset", "unresolved"):
             with self.subTest(verdict=verdict):
                 self.assert_fires(
                     "reached the rendered page",
@@ -421,7 +421,7 @@ class ObservationPrivacyTests(SiteCheckCase):
     def test_no_verdict_label_rendered_fails(self):
         self.assert_fires(
             "no verdict label rendered",
-            **{"index.html": INDEX.replace(VENDOR_LABEL, "Something happened")},
+            **{"index.html": INDEX.replace(OBSERVATION_LABEL, "Something happened")},
         )
 
     def test_the_coverage_note_is_required(self):

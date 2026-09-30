@@ -28,11 +28,11 @@ Detection rests on four measured facts about the Codex weekly window:
    it. Over 22 historical clears, 21 were early (by 33.6-164.0 hours) and 1
    was a natural expiry.
 
-3. A forced clear is still ambiguous between "the account holder spent a
-   banked reset credit" and "the vendor reset everyone". The live RPC exposes
-   rateLimitResetCredits.availableCount, which decrements only in the former
-   case, so the two are separable locally. (Session rollout logs do NOT carry
-   this field, which is why an earlier pass concluded it was unavailable.)
+3. A forced clear is still ambiguous between personal reset use and a vendor
+   action. rateLimitResetCredits.availableCount is a balance, not a redemption
+   ledger: grants and consumption can cancel between polls, and credits can
+   expire. A falling balance is withheld as possible personal activity; an
+   unchanged or unavailable balance does not prove a vendor reset.
 
 4. That credit field is not always readable. It flapped between an int and
    None on 159 of 368 sample rows between 2026-09-03 21:49 and 2026-09-04
@@ -172,6 +172,8 @@ UPSTREAM_EVERY_SECONDS = int(os.environ.get("AI_RESETS_UPSTREAM_SECONDS", "300")
 CLASS_NATURAL = "natural_expiry"
 CLASS_SELF = "self_applied_credit"
 CLASS_GLOBAL = "global_candidate"
+# Legacy on-disk name for an early ACCOUNT clear of unknown cause. Retained
+# for cursor/replay compatibility; never evidence of a vendor-wide reset.
 # No active anchor on record: natural expiry cannot be ruled out, so this
 # must never be read as a global reset.
 CLASS_UNRESOLVED = "unresolved"
@@ -180,10 +182,8 @@ CLASS_UNRESOLVED = "unresolved"
 
 # What a reader may be told, in the exact strings the site and the email use.
 # Deliberately not the CLASS_* names above: those record what the detector
-# computed, these record what may be published. `global_candidate` exports as
-# `vendor_reset` because that is the claim the evidence supports — this account
-# saw its window cleared early and nothing this account did explains it — while
-# the internal name keeps the bound that one Pro account cannot see a vendor.
+# computed, these record what may be published. Historical global_candidate
+# rows are reinterpreted too: account snapshots cannot exclude personal resets.
 VERDICT_NATURAL_EXPIRY = "natural_expiry"
 VERDICT_SELF_APPLIED = "self_applied"
 VERDICT_VENDOR_RESET = "vendor_reset"
@@ -194,7 +194,7 @@ VERDICT_CREDIT_GRANTED = "credit_granted"
 VERDICT_OF_CLASS: dict[str, str] = {
     CLASS_NATURAL: VERDICT_NATURAL_EXPIRY,
     CLASS_SELF: VERDICT_SELF_APPLIED,
-    CLASS_GLOBAL: VERDICT_VENDOR_RESET,
+    CLASS_GLOBAL: VERDICT_UNRESOLVED,
     CLASS_UNRESOLVED: VERDICT_UNRESOLVED,
 }
 
@@ -514,10 +514,13 @@ def classify(
         )
     elif credit_spent:
         verdict = CLASS_SELF
-        reason = f"banked credit count fell {before} -> {after}"
+        reason = f"banked credit count fell {before} -> {after}; possible personal reset use"
     else:
         verdict = CLASS_GLOBAL
-        reason = f"cleared {early_by}s early with the credit bank unchanged"
+        reason = (
+            f"cleared {early_by}s early; cause unverified, "
+            "personal reset use cannot be ruled out"
+        )
         if carried:
             # Say which reading was inferred: "unchanged" is weaker evidence
             # when the field itself was absent on the row that showed the clear.
@@ -1070,18 +1073,15 @@ def read_events(path: Path) -> list[dict[str, Any]]:
 # must not become publishable by default. What is missing from it is deliberate
 # — CLASS_SELF says how the account holder spends their own banked credit, and
 # that is the owner's business, not the vendor's behaviour.
-PUBLIC_CLASSIFICATIONS = (CLASS_NATURAL, CLASS_GLOBAL, CLASS_UNRESOLVED)
+PUBLIC_CLASSIFICATIONS = (CLASS_NATURAL,)
 
 
 def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     """May this observation be shown to anyone but the owner?
 
-    The question this exporter exists to answer is whether an observed clear
-    was the window expiring on schedule or the vendor pushing a reset out, so
-    BOTH answers have to be publishable. A natural expiry and an unresolved
-    clear are facts about our own window that name no vendor action, and
-    saying "this one was just our window running out" is exactly as useful to
-    a reader as saying "this one was not".
+    Only scheduled clears can currently be published. Early or unanchored
+    clears may be personal reset use, even with an unchanged credit balance.
+    They remain in the owner's log as unresolved, including historical rows.
 
     What stays private is what describes the OWNER: a self-applied clear and a
     credit grant reveal how the account holder spends their own banked credit.
@@ -1091,7 +1091,7 @@ def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     kind = event.get("kind")
     if kind == EVENT_LIMIT_CHANGE:
         return True
-    if kind != EVENT_CLEAR:
+    if kind != EVENT_CLEAR or not event.get("confirmed"):
         return False
     classification = event.get("classification")
     if classification not in PUBLIC_CLASSIFICATIONS:
@@ -1099,19 +1099,6 @@ def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     if not event.get("event_id"):
         # No identity means the retraction check below cannot apply, and a
         # publish decision must not resolve missing data toward publishing.
-        return False
-    if classification == CLASS_GLOBAL and (
-        not isinstance(event.get("credits_before"), int)
-        or not isinstance(event.get("credits_after"), int)
-        or event.get("credits_carried")
-    ):
-        # global_candidate rests on ONE piece of evidence: the banked-credit
-        # count did not fall, so the owner did not spend their own credit. When
-        # that field was unreadable on the clear row — it was unreadable on 43%
-        # of rows during the 2026-09-03/04 flap — the verdict's reason still
-        # reads "the credit bank unchanged" while nothing was actually read.
-        # Publishing that would announce the owner's own spend as a vendor-wide
-        # reset, which is the single worst thing this exporter could do.
         return False
     return event.get("event_id") not in retracted_ids
 
@@ -1249,8 +1236,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
     Every clause here prints a value that is on the record, so a sentence can
     never outrun the evidence behind it. The wording rules this obeys: a
     natural expiry is a fact about OUR window and never about the vendor;
-    `vendor_reset` is the strongest claim available and is still bounded to
-    "nothing this account did explains it"; and the phrase "no reset happened"
+    an early clear has an unverified cause; and the phrase "no reset happened"
     is never written, because one account on one plan tier cannot say that.
     """
     window = f"{PRODUCT} {window_name(window_minutes_of(event))}"
@@ -1338,7 +1324,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         # this: measured from the later end, which is the conservative one.
         gap = f"at least {hours} hours {gap}"
 
-    if verdict == VERDICT_VENDOR_RESET:
+    if verdict == VERDICT_UNRESOLVED and event.get("classification") == CLASS_GLOBAL:
         read_on_both_sides = (
             isinstance(event.get("credits_before"), int)
             and isinstance(event.get("credits_after"), int)
@@ -1347,7 +1333,8 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         if read_on_both_sides:
             bank = (
                 f"the banked credit count was read on both sides "
-                f"({before_credits} then {after_credits}) and did not change"
+                f"({before_credits} then {after_credits}), but a balance is not "
+                "a redemption history"
             )
         else:
             # is_public() withholds this row for exactly this reason; the
@@ -1357,18 +1344,18 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
                 "this account's own credit cannot be ruled out"
             )
         return (
-            f"Our {window} window cleared {early} early, and nothing this account did "
-            "explains it.",
-            f"{change} {moment}, {gap}; {bank}.",
+            f"Our {window} window cleared {early} early; the cause is unverified.",
+            f"{change} {moment}, {gap}; {bank}. Personal reset use cannot be ruled "
+            "out. This is not evidence of a provider-wide reset.",
         )
 
     if verdict == VERDICT_SELF_APPLIED:
         return (
-            f"Our {window} window cleared {early} early because this account spent a "
-            "banked reset credit.",
+            f"Our {window} window cleared {early} early with possible personal "
+            "reset-credit use.",
             f"{change} {moment}, {gap}; the banked credit count fell from "
             f"{before_credits} to {after_credits} across the clear, so this account's "
-            "own credit explains it.",
+            "own credit may explain it. A balance decrease alone is not a redemption receipt.",
         )
 
     if verdict == VERDICT_UNRESOLVED:
@@ -1605,8 +1592,8 @@ def export_observations(
     published vocabulary starts, and each observation carries the two sentences
     that say, in plain words, which of the four things happened: the window
     reached its own scheduled expiry, this account spent its own banked credit,
-    the window cleared early and nothing this account did explains it, or there
-    was no expiry time on record and we cannot tell.
+    the window cleared early with an unverified cause, or there was no expiry
+    time on record and we cannot tell. Only scheduled clears are public.
     """
     now = int(time.time()) if now is None else now
     events = read_events(EVENTS_FILE)

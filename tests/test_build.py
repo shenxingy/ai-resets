@@ -34,22 +34,20 @@ from scripts.build import (
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 #
-# Shaped from the real rows in /var/lib/ai-resets/quota_events.jsonl and the
-# 2026-08-30 clear that predates that log: a vendor_reset that may be shown, a
-# self_applied clear and a credit grant that may never be, all in the export
-# contract's own vocabulary. Written out here so these tests never depend on
+# Synthetic rows in the export contract's vocabulary: a limit rescale and
+# natural expiry that may be shown, and private credit activity that may not.
+# Legacy early-clear exports are exercised separately in test_reset_scope.py. Written out here so these tests never depend on
 # the gitignored data/observed/openai.json actually existing.
 
-VENDOR_RESET = {
+LIMIT_CHANGE = {
     "observed_at": "2026-08-31T02:26:56Z",
     "window": "weekly",
-    "verdict": "vendor_reset",
+    "verdict": "limit_change",
     "public": True,
-    "headline": "Our own Codex weekly counter cleared 5.9 days early, and nothing this account did explains it.",
-    "evidence": "Usage went 16% to 0%, 140.6 hours before the scheduled expiry, with the banked-credit count read on both sides and unchanged at 1.",
-    "used_before": 16.0,
-    "used_after": 0.0,
-    "early_by_hours": 140.6,
+    "headline": "Our own Codex weekly limit was rescaled.",
+    "evidence": "Usage went 80% to 40%, with its scheduled expiry unchanged.",
+    "used_before": 80.0,
+    "used_after": 40.0,
 }
 SELF_APPLIED = {
     "observed_at": "2026-09-05T05:32:36Z",
@@ -144,13 +142,13 @@ class PublicObservationTests(unittest.TestCase):
         self.assertEqual(public_observations(leaky), [])
 
     def test_public_flag_false_drops_an_otherwise_publishable_row(self):
-        self.assertEqual(public_observations([dict(VENDOR_RESET, public=False)]), [])
+        self.assertEqual(public_observations([dict(LIMIT_CHANGE, public=False)]), [])
 
     def test_unknown_verdict_is_dropped(self):
-        self.assertEqual(public_observations([dict(VENDOR_RESET, verdict="something_new")]), [])
+        self.assertEqual(public_observations([dict(LIMIT_CHANGE, verdict="something_new")]), [])
 
     def test_row_with_no_sentence_is_dropped(self):
-        empty = dict(VENDOR_RESET)
+        empty = dict(LIMIT_CHANGE)
         empty.pop("headline")
         empty.pop("evidence")
         self.assertEqual(public_observations([empty]), [])
@@ -159,18 +157,18 @@ class PublicObservationTests(unittest.TestCase):
         rows = public_observations(
             [
                 dict(NATURAL, reason="banked credit count fell 2 -> 1"),
-                VENDOR_RESET,
+                LIMIT_CHANGE,
                 SELF_APPLIED,
             ]
         )
-        self.assertEqual([row["verdict"] for row in rows], ["natural_expiry", "vendor_reset"])
+        self.assertEqual([row["verdict"] for row in rows], ["natural_expiry", "limit_change"])
         # Whitelisted fields only: an internal reason string that names the
         # credit bank must not ride along into site/data.json.
         self.assertNotIn("reason", rows[0])
         self.assertNotIn("public", rows[0])
 
     def test_missing_observed_at_does_not_raise_while_sorting(self):
-        undated = dict(VENDOR_RESET)
+        undated = dict(LIMIT_CHANGE)
         undated.pop("observed_at")
         rows = public_observations([undated, NATURAL])
         self.assertEqual(len(rows), 2)
@@ -202,7 +200,7 @@ class ProbeBadgeTests(unittest.TestCase):
         # Two opposite mistakes, one on each side of the same status.
         # With observations on the card, "Announcements only" would deny a probe
         # directly above its own measurements.
-        text, state = probe_badge({"status": "absent"}, NOW, [{"verdict": "vendor_reset"}])
+        text, state = probe_badge({"status": "absent"}, NOW, [{"verdict": "limit_change"}])
         self.assertEqual((text, state), ("Ground truth · probe state unknown", "offline"))
         # With nothing on the card, "Ground truth" promises a measurement the
         # card does not contain. This is the Anthropic case the day its probe
@@ -236,8 +234,8 @@ class ProbeBadgeTests(unittest.TestCase):
             (None, []),
             ({}, []),
             ({"status": "absent"}, []),
-            ({"status": "absent"}, [{"verdict": "vendor_reset"}]),
-            ({"status": "unknown-to-this-build"}, [{"verdict": "vendor_reset"}]),
+            ({"status": "absent"}, [{"verdict": "limit_change"}]),
+            ({"status": "unknown-to-this-build"}, [{"verdict": "limit_change"}]),
             ({"status": "ok", "last_verified_at": at(30)}, []),
             ({"status": "ok", "last_verified_at": at(30)}, [{"verdict": "x"}]),
             ({"status": "ok", "last_verified_at": at(4000)}, [{"verdict": "x"}]),
@@ -293,11 +291,11 @@ class ProbeBadgeTests(unittest.TestCase):
 
 class ObservationRenderTests(unittest.TestCase):
     def test_renders_headline_evidence_verdict_and_pacific_time(self):
-        markup = build_observations(vendor([VENDOR_RESET, SELF_APPLIED], PROBE_OK))
-        self.assertIn('data-verdict="vendor_reset"', markup)
-        self.assertIn(VERDICT_LABELS["vendor_reset"], markup)
-        self.assertIn("cleared 5.9 days early", markup)
-        self.assertIn("140.6 hours before the scheduled expiry", markup)
+        markup = build_observations(vendor([LIMIT_CHANGE, SELF_APPLIED], PROBE_OK))
+        self.assertIn('data-verdict="limit_change"', markup)
+        self.assertIn(VERDICT_LABELS["limit_change"], markup)
+        self.assertIn("limit was rescaled", markup)
+        self.assertIn("with its scheduled expiry unchanged", markup)
         self.assertIn("Aug 30, 2026, 7:26 PM PDT", markup)
         self.assertIn('<time datetime="2026-08-31T02:26:56Z">', markup)
         # The credit spend is not on the page in any form.
@@ -305,17 +303,17 @@ class ObservationRenderTests(unittest.TestCase):
         self.assertNotIn("banked credit count fell", markup)
 
     def test_coverage_sentence_comes_from_the_probe_not_from_this_file(self):
-        markup = build_observations(vendor([VENDOR_RESET], PROBE_OK))
+        markup = build_observations(vendor([LIMIT_CHANGE], PROBE_OK))
         self.assertIn("One Codex Pro account, weekly window only.", markup)
         self.assertIn('href="methodology.html#ground-truth"', markup)
 
     def test_missing_coverage_falls_back_without_claiming_a_population(self):
-        markup = build_observations(vendor([VENDOR_RESET], {"status": "ok"}))
+        markup = build_observations(vendor([LIMIT_CHANGE], {"status": "ok"}))
         self.assertIn(build.DEFAULT_COVERAGE, markup)
 
     def test_truncation_is_stated_rather_than_silent(self):
         rows = [
-            dict(VENDOR_RESET, observed_at=f"2026-08-{day:02d}T02:26:56Z")
+            dict(LIMIT_CHANGE, observed_at=f"2026-08-{day:02d}T02:26:56Z")
             for day in range(1, OBSERVATIONS_SHOWN + 4)
         ]
         markup = build_observations(vendor(rows, PROBE_OK))
@@ -337,7 +335,7 @@ ANNOUNCEMENT = {
 
 class VendorCardTests(unittest.TestCase):
     def test_card_carries_the_probe_badge_instead_of_tracking(self):
-        vendors = {"openai": vendor([VENDOR_RESET], PROBE_OK, [ANNOUNCEMENT])}
+        vendors = {"openai": vendor([LIMIT_CHANGE], PROBE_OK, [ANNOUNCEMENT])}
         markup = build_vendor_cards(vendors, NOW)
         self.assertIn('<span class="signal-status" data-probe="verified">', markup)
         self.assertNotIn("Tracking", markup)
@@ -352,11 +350,11 @@ class VendorCardTests(unittest.TestCase):
     def test_probe_only_vendor_renders_without_an_announcement_feed(self):
         # data/openai.json is a gitignored fetch cache. Before this, an empty
         # events list reached events[-1] and took the whole publish down.
-        vendors = {"openai": vendor([VENDOR_RESET], PROBE_OK)}
+        vendors = {"openai": vendor([LIMIT_CHANGE], PROBE_OK)}
         markup = build_vendor_cards(vendors, NOW)
         self.assertIn("Codex / ChatGPT", markup)
         self.assertNotIn("Last tracked move", markup)
-        self.assertIn("cleared 5.9 days early", markup)
+        self.assertIn("limit was rescaled", markup)
 
     def test_vendor_with_neither_signal_is_not_rendered(self):
         self.assertEqual(build_vendor_cards({"openai": vendor()}, NOW), "")
@@ -364,7 +362,7 @@ class VendorCardTests(unittest.TestCase):
     def test_observations_stay_out_of_announcement_statistics(self):
         # "Latest tracked move", the tracked-event count and the weekday timing
         # pattern are about announcements. An observation is not one.
-        with_observations = vendor([VENDOR_RESET, NATURAL], PROBE_OK, [ANNOUNCEMENT])
+        with_observations = vendor([LIMIT_CHANGE, NATURAL], PROBE_OK, [ANNOUNCEMENT])
         without = vendor(probe=PROBE_OK, events=[ANNOUNCEMENT])
         markup = build_vendor_cards({"openai": with_observations}, NOW)
         self.assertIn('<div class="kpi-value">1</div>', markup)  # one event, not three
@@ -434,7 +432,7 @@ class LoaderTests(unittest.TestCase):
             {
                 "vendor": "openai",
                 "probe": dict(PROBE_OK, last_error="/home/someone/token.json"),
-                "observations": [VENDOR_RESET, SELF_APPLIED, CREDIT_GRANTED],
+                "observations": [LIMIT_CHANGE, SELF_APPLIED, CREDIT_GRANTED],
             },
         )
         vendors = attach_observations({}, observed)
@@ -442,7 +440,7 @@ class LoaderTests(unittest.TestCase):
         # measurement is a signal about that vendor whether or not anyone
         # tweeted about it.
         self.assertEqual(list(vendors), ["openai"])
-        self.assertEqual([row["verdict"] for row in vendors["openai"]["observations"]], ["vendor_reset"])
+        self.assertEqual([row["verdict"] for row in vendors["openai"]["observations"]], ["limit_change"])
         self.assertEqual(vendors["openai"]["events"], [])
         # Probe fields are whitelisted too: last_error can carry a filesystem
         # path, and nothing here has reviewed it.
@@ -526,7 +524,7 @@ class AnnounceAnnotationTests(unittest.TestCase):
       unprobed    we measure nothing for this vendor
       no_reading  the probe ships but has never reported
       not_seen    the probe looked and saw no vendor reset near the post
-      confirmed   a vendor_reset observation sits within the match window
+      confirmed   requires vendor-reset evidence, never an account-only clear
     """
 
     # The real 2026-08-30 pair: this account cleared 149 seconds BEFORE the post.
@@ -585,15 +583,14 @@ class AnnounceAnnotationTests(unittest.TestCase):
         annotate_announcements(vendors, self.state)
         self.assertEqual(self.status(vendors), OBSERVED_NOT_SEEN)
 
-    def test_an_observation_before_the_post_confirms_it(self):
+    def test_an_account_clear_before_the_post_cannot_confirm_it(self):
         self.write_health("codex")
         self.write_events([self.CLEAR])
         vendors = self.vendors()
         annotate_announcements(vendors, self.state)
         observed = vendors["openai"]["events"][0]["observed"]
-        self.assertEqual(observed["status"], OBSERVED_CONFIRMED)
-        # Positive lead means our account saw it first, which is the ordinary case.
-        self.assertEqual(observed["lead_seconds"], self.POST_AT - self.OBSERVED_AT)
+        self.assertEqual(observed["status"], OBSERVED_NOT_SEEN)
+        self.assertNotIn("lead_seconds", observed)
 
     def test_a_self_applied_clear_never_confirms_an_announcement(self):
         # It says what the account holder did with their own banked credit.

@@ -104,7 +104,7 @@ def main():
             verdict = observation.get("verdict")
             assert verdict in PUBLIC_VERDICTS, f"{name} published verdict {verdict!r}"
             published += 1
-    for private in ("self_applied", "credit_granted"):
+    for private in ("self_applied", "credit_granted", "vendor_reset", "unresolved"):
         assert private not in index, f"{private} reached the rendered page"
     if published:
         assert 'class="observations"' in index, "public observations exist but nothing rendered them"

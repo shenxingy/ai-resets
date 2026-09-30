@@ -1305,7 +1305,7 @@ class StageAwareNotifierTests(unittest.TestCase):
         stages = sorted(stage for _, _, stage, _, _ in self.deliveries())
         self.assertEqual(stages, [STAGE_CONFIRMED] * 2 + [STAGE_NEW] * 2)
 
-    def test_a_retrospective_post_we_then_observe_is_confirmed_once(self):
+    def test_a_later_account_clear_does_not_send_a_confirmation(self):
         post = self.announcement("2090766694897619318", "We have reset usage limits.")
         self.write_feed(events=[post])
         self.write_feed(events=[post])
@@ -1316,12 +1316,13 @@ class StageAwareNotifierTests(unittest.TestCase):
         self.write_cursor(used=0.0, credits=1)
         self.notify()
         follow_ups = [m for m in self.subscriber_mails() if "Confirmed" in m["html_body"]]
-        self.assertEqual(len(follow_ups), 2)
-        self.assertIn("Observed on our Pro account", follow_ups[0]["html_body"])
+        self.assertEqual(follow_ups, [])
+        self.assertEqual(len(self.subscriber_mails()), 2)
+        self.assertTrue(all(stage == STAGE_NEW for _, _, stage, _, _ in self.deliveries()))
 
-    def test_a_mail_that_already_said_observed_owes_no_follow_up(self):
-        # Nothing is promised, so nothing is owed: the claim is settled at send
-        # time and the row can never become a confirmation candidate.
+    def test_a_clear_before_the_post_does_not_settle_the_reset_claim(self):
+        # An unchanged Bank balance cannot exclude personal redemption, even
+        # if a matching official announcement appears afterwards.
         self.write_probe_log(self.seen_clear(NOW - 1500))
         self.write_cursor(used=0.0, credits=1)
         post = self.announcement("2090766694897619318", "We have reset usage limits.")
@@ -1330,7 +1331,9 @@ class StageAwareNotifierTests(unittest.TestCase):
         self.write_feed(events=[post])
         self.notify()
         self.assertEqual(len(self.subscriber_mails()), 2)
-        self.assertTrue(all(claim == CLAIM_SETTLED for *_, claim in self.deliveries()))
+        self.assertTrue(all(claim == CLAIM_PENDING for *_, claim in self.deliveries()))
+        self.assertTrue(all("Observed on our Pro account" not in mail["html_body"]
+                            for mail in self.subscriber_mails()))
         self.notify()
         self.assertEqual(len(self.subscriber_mails()), 2)
 

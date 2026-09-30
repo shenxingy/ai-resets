@@ -63,29 +63,28 @@
       </section>
 
       <section id="ground-truth">
-        <h2>Natural expiry or an actual reset</h2>
-        <p>Every Codex usage window carries a scheduled expiry time. A probe on one Codex Pro account reads that time, the percentage used, and the banked reset-credit count about once a minute, and records the values on both sides of every change. When the counter clears, the recorded evidence is what separates four different things that all look identical on screen.</p>
+        <h2>Account recovery is not a provider-wide reset</h2>
+        <p>Our probes watch the operator's Codex and Claude Code quota windows. A counter clearing early tells us when this account recovered quota, but it does not tell us who caused it or which other users were affected.</p>
         <dl>
           <dt><strong>Scheduled expiry</strong></dt>
-          <dd>The clear landed at or after the expiry time that was in force while the window still had usage on it. The window reached the end of its life. This is not a reset, and it is a statement about our window, not about the provider.</dd>
-          <dt><strong>Cleared early · unexplained</strong></dt>
-          <dd>The clear landed before that expiry time, and the banked-credit count was read on both sides of the clear and did not fall. Nothing this account did explains it. That is the strongest claim on this site and it is still bounded: one account on one plan tier cannot see who else was affected, so this never means “the provider reset everyone.”</dd>
-          <dt><strong>Cannot tell</strong></dt>
-          <dd>No scheduled expiry time was on record for that window when it cleared. An unexplained clear is never claimed from a missing anchor.</dd>
-          <dt><strong>Limits rescaled</strong></dt>
-          <dd>The limits themselves moved rather than the counter clearing.</dd>
+          <dd>The clear landed at or after the scheduled expiry recorded while the window was active. We may show it as an observation of our own account; it never counts as an extra provider reset.</dd>
+          <dt><strong>Personal reset use</strong></dt>
+          <dd>A Bank count falling across a clear suggests personal redemption, but credits can also expire. These observations stay private and never confirm a public reset.</dd>
+          <dt><strong>Cause unverified</strong></dt>
+          <dd>An early clear, or a clear without a recorded expiry anchor, stays in the private probe log. An unchanged Bank count does not exclude a grant and redemption between polls. Multiple accounts clearing together does not establish the cause either.</dd>
+          <dt><strong>Bank credits granted</strong></dt>
+          <dd>A credit becoming available is separate from using it. An official announcement granting reset credits does not mean users' quota windows have already reset.</dd>
         </dl>
-        <p>A fifth outcome exists and is never published: a clear the account holder caused by spending one of their own banked reset credits, identified by the credit count falling across the clear. Those rows, and the arrival of a new banked credit, describe the operator’s own account activity rather than anything a provider did, so they stay out of the public feed.</p>
-        <p>Each provider card carries a badge naming its evidence: <em>Ground truth · verified N ago</em> when the probe reported within the last 15 minutes, <em>Ground truth · probe offline N</em> when it has not, and <em>Announcements only</em> for a provider with no probe at all.</p>
-        <h3>What this cannot see</h3>
+        <p><a href="https://learn.chatgpt.com/docs/app-server">OpenAI documents separate Bank balances and redemption operations</a>. <a href="https://support.claude.com/en/articles/17007452-what-is-a-limit-reset">Claude personal limit resets can restore five-hour or weekly limits</a>, including the same account's Claude Code usage. Our Claude usage response does not expose a reset-redemption ledger.</p>
+        <p>Account-only clears never mark an announcement confirmed, originate a public reset, or enter public reset counts. The same rule applies when old probe logs are exported again. Official announcements remain visible with the scope stated by their source; an announcement and a nearby account clear alone do not prove causation.</p>
+        <h3>What the probes can establish</h3>
         <ul>
-          <li><strong>One Codex Pro account.</strong> Observations on a single account and plan tier can never establish what happened to anyone else.</li>
-          <li><strong>The weekly window only.</strong> The 5-hour windows on this account have read 0% for their entire recorded history, so nothing has ever cleared on them to observe.</li>
-          <li><strong>Nothing under 10% used.</strong> A clear on a barely-used window is discarded, because ordinary usage noise at that level is indistinguishable from a clear. A real reset of a nearly empty window is invisible here.</li>
-          <li><strong>Arrival, not rollout.</strong> Timing is when the change reached this account, bracketed by the two polls either side of it, not when a provider began rolling it out.</li>
-          <li><strong>Anthropic and Google are not measured at all.</strong> Their cards say “Announcements only” because that is all they are.</li>
+          <li><strong>Readings, not fleet coverage.</strong> The probes measure one Codex account and two Claude accounts. Google has no active probe. A freshness badge describes the last successful reading, not verification of a provider-wide reset.</li>
+          <li><strong>Detection limits.</strong> Windows with less than a 10-point usage drop may not show a detectable clear. Missing readings mean unknown, not that nothing happened.</li>
+          <li><strong>Arrival timing.</strong> A clear is bracketed by the readings either side of it. That interval is not the time a provider started or completed a rollout.</li>
+          <li><strong>No redemption during monitoring.</strong> Probes read quota metadata without spending reset credits.</li>
         </ul>
-        <p>The verdict, the evidence sentence, and the probe’s own freshness are published in <a href="/data.json">data.json</a> alongside the announcements.</p>
+        <p>Public observations and probe freshness are available in <a href="/data.json">data.json</a>. Personal and ambiguous clears remain outside that feed.</p>
       </section>
 
       <section id="forecast">

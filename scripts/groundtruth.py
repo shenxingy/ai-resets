@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.timefmt import describe_age, format_epoch_pacific
+from scripts.quota_probe import VERDICT_OF_CLASS
 
 DEFAULT_STATE_DIR = Path("/var/lib/ai-resets")
 
@@ -64,12 +65,10 @@ VERDICT_NATURAL = "natural_expiry"
 VERDICT_SELF = "self_applied"
 VERDICT_VENDOR = "vendor_reset"
 VERDICT_UNRESOLVED = "unresolved"
-_INTERNAL_TO_VERDICT = {
-    "natural_expiry": VERDICT_NATURAL,
-    "self_applied_credit": VERDICT_SELF,
-    "global_candidate": VERDICT_VENDOR,
-    "unresolved": VERDICT_UNRESOLVED,
-}
+# The raw-log consumer and both exporters must interpret legacy clears alike.
+# In particular, global_candidate is an unresolved account clear, not a reset
+# receipt. Keeping a separate map here previously bypassed the export guard.
+_INTERNAL_TO_VERDICT = VERDICT_OF_CLASS
 
 # How far from an announcement an observation may sit and still be the same
 # event. Our own account saw the 2026-08-30 reset 2.5 minutes BEFORE the post,
@@ -432,42 +431,10 @@ def ground_truth_line(
             ),
         }
 
-    # The observation is checked FIRST, before any usage reading. It is the
-    # strongest evidence there is and it does not need a usage percentage to
-    # be true. A probe with no percentage to quote — the Claude one — was
-    # otherwise reporting "not observed" for resets it had just measured,
-    # because the reading branch returned before this was ever consulted.
-    observed = observation_near(announced_at, state_dir, vendor=vendor)
-    if observed is not None:
-        # The question this whole tracker exists to answer: did the thing
-        # actually reach a real account, and was it a reset rather than the
-        # window expiring on its own schedule?
-        lead = announced_at - observed["t"] if isinstance(announced_at, int) else None
-        timing = ""
-        if isinstance(lead, int) and abs(lead) >= 60:
-            timing = (
-                f", {describe_age(abs(lead))} {'before' if lead > 0 else 'after'} this post"
-            )
-        early = observed.get("early_by_seconds")
-        early_phrase = (
-            f" {describe_age(early)} before its scheduled expiry"
-            if isinstance(early, (int, float)) and early > 0
-            else ""
-        )
-        return {
-            "status": STATUS_OK,
-            "observed": True,
-            "verdict": VERDICT_VENDOR,
-            "line": (
-                f"Observed on {account} at "
-                f"{format_epoch_pacific(observed['t'])}{timing}: the weekly "
-                f"window went {observed['used_before']:.0f}% to "
-                f"{observed['used_after']:.0f}%{early_phrase}, with the banked "
-                "credit count read on both sides and unchanged. Nothing this "
-                "account did explains it."
-            ),
-        }
-
+    # Account clears cannot establish why quota recovered. In particular, a
+    # nearby announcement does not exclude personal reset use. Do not turn a
+    # raw global_candidate record into a confirmation here. Bank-credit grants
+    # retain their separate, timing-only handling below.
     reading = codex_weekly_reading(state_dir) if spec.has_usage_reading else None
     if reading is None and spec.has_usage_reading:
         return {
