@@ -1,0 +1,111 @@
+name: Public acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Deployed revision to compare with the public site
+        default: main
+        required: true
+  pull_request:
+    paths:
+      - .github/workflows/public-acceptance.yml
+
+permissions:
+  contents: read
+
+jobs:
+  public-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      # Check the deployed revision, not an application change that has not
+      # shipped yet. This job needs an external network; origin-only access
+      # cannot establish that public DNS, TLS and forwarding work.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ inputs.revision || 'main' }}
+          persist-credentials: false
+
+      - name: Verify the public deployment over HTTPS
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          from urllib.parse import urlsplit
+
+          from scripts.build import PUBLIC_VERDICTS
+
+          base = json.loads(Path('site.config.json').read_text())['public_url'].rstrip('/')
+          assert urlsplit(base).scheme == 'https', 'acceptance requires HTTPS'
+          revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          failures = []
+          bodies = {}
+
+          def fetch(route):
+              with tempfile.TemporaryDirectory() as directory:
+                  output = Path(directory) / 'response'
+                  response = subprocess.run([
+                      'curl', '--fail', '--silent', '--show-error', '--location',
+                      '--proto', '=https', '--proto-redir', '=https',
+                      '--connect-timeout', '8', '--max-time', '30',
+                      '--header', 'Cache-Control: no-cache',
+                      '--user-agent', 'ai-resets-public-acceptance',
+                      '--output', str(output), '--write-out', '%{json}',
+                      base + route,
+                  ], capture_output=True, text=True)
+                  metrics = json.loads(response.stdout)
+                  body = output.read_bytes() if output.exists() else b''
+                  return route, body, {
+                      'status': metrics['http_code'],
+                      'remote_ip': metrics['remote_ip'],
+                      'tls_verify_result': metrics['ssl_verify_result'],
+                      'seconds': metrics['time_total'],
+                      'bytes': len(body),
+                      'sha256': hashlib.sha256(body).hexdigest(),
+                      'exit_code': response.returncode,
+                      'error': response.stderr.strip(),
+                  }
+
+          results = {}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              for route, body, result in pool.map(fetch, ['/', '/app.js', '/methodology.html', '/data.json']):
+                  bodies[route] = body
+                  results[route] = result
+                  if result['exit_code'] or result['status'] != 200 or result['tls_verify_result']:
+                      failures.append(f'{route}: HTTPS request failed')
+
+          if not failures:
+              for name in ['app.js', 'methodology.html']:
+                  if bodies['/' + name] != (Path('site') / name).read_bytes():
+                      failures.append(f'{name}: public bytes differ from revision {revision}')
+              index = bodies['/'].decode('utf-8')
+              if 'AI Reset Watch' not in index or 'app.js' not in index:
+                  failures.append('homepage: expected application did not render')
+              for verdict in ['self_applied', 'credit_granted', 'vendor_reset', 'unresolved']:
+                  if verdict in index:
+                      failures.append(f'homepage: private verdict {verdict} leaked')
+              data = json.loads(bodies['/data.json'])
+              vendors = data.get('vendors', {})
+              if not {'openai', 'anthropic', 'google'} <= vendors.keys():
+                  failures.append('data.json: expected vendor feeds are missing')
+              for vendor, feed in vendors.items():
+                  for observation in feed.get('observations', []):
+                      if observation.get('verdict') not in PUBLIC_VERDICTS:
+                          failures.append(f'{vendor}: non-public observation reached data.json')
+              results['generated_at'] = data.get('generated_at')
+
+          report = {'revision': revision, 'public_url': base, 'checks': results, 'failures': failures}
+          rendered = json.dumps(report, indent=2)
+          print(rendered)
+          if os.environ.get('GITHUB_STEP_SUMMARY'):
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                  summary.write('```json\n' + rendered + '\n```\n')
+          if failures:
+              raise SystemExit(1)
+          PY
