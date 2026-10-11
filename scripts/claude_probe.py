@@ -57,15 +57,29 @@ What differs from Codex, all measured on this host on 2026-09-05/06:
    the export below), so a session clear cannot become public by being
    forgotten about in one of them.
 
-6. TWO ACCOUNTS, labelled `a` and `b` and described only as two Max 20x
-   accounts on one operator machine. Never an organisation name, never an
-   email, in any file this writes. Both clearing within two polls is recorded
-   as `concordance: agreeing`; one clearing while the other's weekly window is
-   readable and does NOT clear is `disagree`, which is an owner alert and is
-   withheld from the public export rather than published as a vendor reset.
+6. TWO ACCOUNTS, labelled `a` and `b` and described in public only by the
+   plan each last read (accounts_phrase): account a moved from Max to a Team
+   org on 2026-10-11, so no fixed description stays true. Never an
+   organisation name, never an email, in any file this writes. Both clearing
+   within two polls is recorded as `concordance: agreeing`; one clearing
+   while the other's weekly window is readable and does NOT clear is
+   `disagree`. Nothing pages the owner on a disagreement yet: it is a journal
+   line, and groundtruth.clear_observations skips such a clear so it can
+   never corroborate an announcement.
 
-An early weekly clear is unresolved and stays private. Two accounts agreeing
-does not exclude personal reset use on both. Official reset documentation:
+7. ATTRIBUTION (docs/reset-attribution.md). Each row carries a fingerprint of
+   the profile's `.claude.json` `oauthAccount` (organisation and account),
+   read fresh on every poll like the credential, so a `/login` to another
+   org shows as an `account_change` rather than a clear. There is no bank, so
+   the shared classifier's credit check reads `no_bank`. In its place, an
+   early weekly clear reads the profile's `history.jsonl` at clear time:
+   `/rate-limit-options` or `/limit-reset` within the hour before it is the
+   owner's own reset (2026-09-30, account b, 30 minutes before).
+
+An early weekly clear stays private however it is attributed. Two accounts
+agreeing does not exclude personal reset use on both, and a personal limit
+reset redeemed on claude.ai leaves nothing this probe can read. Official
+reset documentation:
 https://support.claude.com/en/articles/17007452-what-is-a-limit-reset
 """
 from __future__ import annotations
@@ -154,7 +168,7 @@ SESSION_MINUTES = 300
 WEEKLY_MINUTES = 10080
 WINDOW_MINUTES_BY_GROUP = {"session": SESSION_MINUTES, "weekly": WEEKLY_MINUTES}
 
-# The two Max 20x accounts, in the only names that are ever written down.
+# The two accounts, in the only names that are ever written down.
 LABELS = ("a", "b")
 # Where the editor keeps each profile's OAuth token, relative to the home
 # directory of whoever the probe runs as. Derived rather than written out so
@@ -164,7 +178,28 @@ DEFAULT_CREDENTIALS = {
     "a": str(Path.home() / ".claude" / ".credentials.json"),
     "b": str(Path.home() / ".claude-profiles" / "main1" / ".credentials.json"),
 }
+# Each profile's own config, which holds `oauthAccount`: who is signed in. The
+# primary profile keeps it at $HOME/.claude.json, NOT inside ~/.claude; a
+# profile directory keeps it inside itself. Read-only, which is all the unit's
+# ProtectHome=read-only allows and all this process ever needs.
+DEFAULT_PROFILE_CONFIGS = {
+    "a": str(Path.home() / ".claude.json"),
+    "b": str(Path.home() / ".claude-profiles" / "main1" / ".claude.json"),
+}
+# Each profile's prompt history, where Claude Code writes every slash command
+# typed into it. Read only when an early weekly clear needs attributing.
+DEFAULT_HISTORIES = {
+    "a": str(Path.home() / ".claude" / "history.jsonl"),
+    "b": str(Path.home() / ".claude-profiles" / "main1" / "history.jsonl"),
+}
 HEALTH_LABELS = {label: f"claude:{label}" for label in LABELS}
+
+# The commands that open Claude Code's limit-reset menu. Either one in a
+# profile's history within LOCAL_TRACE_LOOKBACK_SECONDS before a weekly clear
+# is the owner's own reset: on 2026-09-30 account b ran /rate-limit-options at
+# 17:48 UTC and its weekly window cleared at 18:18, while account a's did not.
+RESET_MENU_COMMANDS = ("/rate-limit-options", "/limit-reset")
+LOCAL_TRACE_LOOKBACK_SECONDS = 3600
 
 # Ten consecutive polls where every account was ATTEMPTED and every attempt
 # failed. At 300s that is 50 minutes of blindness before systemd is handed the
@@ -185,8 +220,11 @@ CONCORDANCE_UNKNOWN = "unknown"
 
 EXPORT_VENDOR = "anthropic"
 PRODUCT = "Claude Code"
-# The only description of the population that may be published.
-ACCOUNTS_PHRASE = "Two Max 20x accounts on one operator machine"
+# How a plan type is written in the one public description of the accounts.
+# A value not listed here is shown capitalised if it looks like a plan name,
+# and dropped otherwise rather than published verbatim.
+PLAN_NAMES = {"max": "Max", "pro": "Pro", "team": "Team", "enterprise": "Enterprise"}
+NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four"}
 
 # What may be shown to anyone but the owner. An allowlist: a classification
 # this build does not recognise must not become publishable by default.
@@ -241,6 +279,50 @@ def credential_paths() -> dict[str, Path]:
         )
         for label, default in DEFAULT_CREDENTIALS.items()
     }
+
+
+def profile_config_paths() -> dict[str, Path]:
+    """Each account's `.claude.json`, overridable as the credential path is."""
+    return {
+        label: Path(os.environ.get(f"AI_RESETS_CLAUDE_CONFIG_{label.upper()}", default))
+        for label, default in DEFAULT_PROFILE_CONFIGS.items()
+    }
+
+
+def history_paths() -> dict[str, Path]:
+    """Each account's `history.jsonl`, overridable the same way."""
+    return {
+        label: Path(os.environ.get(f"AI_RESETS_CLAUDE_HISTORY_{label.upper()}", default))
+        for label, default in DEFAULT_HISTORIES.items()
+    }
+
+
+def read_account_fingerprint(path: Path) -> str | None:
+    """The fingerprint of whoever this profile is signed in as, or None.
+
+    `organizationUuid + "/" + accountUuid` from `oauthAccount`, hashed by
+    quota_probe.account_fingerprint before it leaves this function: the raw
+    ids, the email and the organisation name beside them in that file are
+    never kept, logged or written. Both ids are needed. Account a's 2026-10-11
+    switch moved it to a different ORGANISATION on its plan, and either id
+    alone could stay the same across a move like that.
+
+    Read on every poll and never cached, like the credential. Unreadable is
+    None, which the detector treats as "unread", never as a new account:
+    Claude Code rewrites this file constantly, and a read that lands
+    mid-write must cost one row its identity, not raise an account change.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    account = raw.get("oauthAccount") if isinstance(raw, dict) else None
+    if not isinstance(account, dict):
+        return None
+    org, user = account.get("organizationUuid"), account.get("accountUuid")
+    if not (isinstance(org, str) and org and isinstance(user, str) and user):
+        return None
+    return qp.account_fingerprint(f"{org}/{user}")
 
 
 def _expiry_epoch(value: Any) -> int | None:
@@ -470,6 +552,7 @@ def normalise_usage(
     label: str,
     now: int,
     plan_type: str | None = None,
+    account_fp: str | None = None,
 ) -> list[dict[str, Any]]:
     """Flatten one usage payload into quota_probe's row shape, one row per slot.
 
@@ -512,6 +595,7 @@ def normalise_usage(
                 # the shape quota_probe's helpers already read.
                 "credits_available": None,
                 "account": label,
+                "account_fp": account_fp,
                 "limit_kind": kind,
                 "model": model,
                 "model_name": model_name,
@@ -541,13 +625,19 @@ def anthropic_contract() -> Iterator[None]:
     keeps the Codex probe's own tests and any same-process reader of that
     module seeing its own contract. The restore is in a finally: an exception
     out of observe() must not leave the Codex constants rewritten.
+
+    Two attribution facts are swapped the same way. This account has no
+    banked-credit ledger (CREDIT_BANK), so an unreadable bank is "no_bank"
+    rather than a check that failed; and an early clear must wait for the
+    profile's reset-menu history (LOCAL_TRACE), which annotate() reads.
     """
-    saved = (qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS)
+    saved = (qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS, qp.CREDIT_BANK, qp.LOCAL_TRACE)
     qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS = POLL_SECONDS, NATURAL_GRACE_SECONDS
+    qp.CREDIT_BANK, qp.LOCAL_TRACE = False, True
     try:
         yield
     finally:
-        qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS = saved
+        qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS, qp.CREDIT_BANK, qp.LOCAL_TRACE = saved
 
 
 def window_key(row: dict[str, Any]) -> str:
@@ -589,8 +679,8 @@ def record_concordance(
 
     `accounts_agreeing` is corroboration: one vendor action seen twice. A
     `accounts_disagree` is the opposite — one account's weekly window cleared
-    while another readable one did not — and is an owner alert rather than
-    evidence, so the export withholds it instead of calling it a vendor reset.
+    while another readable one did not — and is not evidence: the export
+    keeps it private and groundtruth.clear_observations skips it outright.
     `unknown` is the honest third answer: the other account was idle, blind, or
     has not been sampled yet, and silence there proves nothing.
 
@@ -614,6 +704,101 @@ def record_concordance(
     return verdict
 
 
+def reset_menu_trace(path: Path, lo: int, hi: int) -> tuple[str, str]:
+    """Was the reset menu opened in [lo - 1h, hi]? (found/none/unread, detail).
+
+    Read at clear time only: the file grows by every prompt typed into the
+    profile, and nothing else needs it. Entries carry `display` (what was
+    typed) and `timestamp` in epoch milliseconds (measured 2026-10-11).
+
+    Anything that leaves the answer open is "unread", never "none": the file
+    missing or unreadable, or a line that names a reset command but cannot be
+    parsed or placed in time. The last can be the very line Claude Code is
+    writing as we read, and calling that "no reset menu" would be how the
+    owner's own reset becomes an unattributed clear.
+    """
+    try:
+        handle = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return qp.CHECK_UNREAD, "the profile's history could not be opened"
+    try:
+        with handle:
+            for line in handle:
+                if not any(command in line for command in RESET_MENU_COMMANDS):
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    return qp.CHECK_UNREAD, "a reset-menu line in the history could not be parsed"
+                display = entry.get("display") if isinstance(entry, dict) else None
+                if not isinstance(display, str) or not display.lstrip().startswith(
+                    RESET_MENU_COMMANDS
+                ):
+                    continue
+                moment = _expiry_epoch(entry.get("timestamp"))
+                if moment is None:
+                    return qp.CHECK_UNREAD, "a reset-menu entry in the history has no readable time"
+                if lo - LOCAL_TRACE_LOOKBACK_SECONDS <= moment <= hi:
+                    command = display.split()[0]
+                    return qp.TRACE_FOUND, f"{command} was run {hi - moment}s before the clear was seen"
+    except OSError:
+        return qp.CHECK_UNREAD, "the profile's history could not be read"
+    return qp.TRACE_NONE, "no reset menu in the hour before"
+
+
+def attribute_weekly_clear(annotated: dict[str, Any]) -> None:
+    """Finish attributing an early weekly clear the detector left unresolved.
+
+    The shared classifier cannot read a profile's history, so under this
+    contract every early clear leaves it `global_candidate` with the local
+    trace unread. Here the trace is read and attribution re-run: the menu
+    found is self-applied (contract step 4, which needs no other check), and
+    otherwise the same attribute_early_clear decides between unattributed
+    and unresolved with every check, the trace included, in the reason.
+    """
+    checks = dict(annotated.get("checks") or {})
+    lo, hi = annotated.get("clear_bracket_lo"), annotated.get("clear_bracket_hi")
+    path = history_paths().get(str(annotated.get("account")))
+    if path is None or not isinstance(lo, int) or not isinstance(hi, int):
+        status, detail = qp.CHECK_UNREAD, "no history path for this account"
+    else:
+        status, detail = reset_menu_trace(path, lo, hi)
+    checks["local_trace"] = status
+    annotated["checks"] = checks
+    annotated["detector_reason"] = annotated.get("reason")
+    if status == qp.TRACE_FOUND:
+        annotated["classification"] = qp.CLASS_SELF
+        annotated["reason"] = (
+            f"the Claude Code reset menu was open: {detail}; possible personal "
+            "limit reset"
+        )
+        return
+    details = qp.check_details(
+        lo if isinstance(lo, int) else 0,
+        hi if isinstance(hi, int) else 0,
+        POLL_SECONDS,
+        anchor_jump=annotated.get("confirmed_by") == "anchor_jump",
+    )
+    if status != qp.TRACE_NONE:
+        details["local_trace"] = detail
+    classification, reason = qp.attribute_early_clear(
+        checks, annotated.get("early_by_seconds"), details
+    )
+    annotated["classification"] = classification
+    if classification == qp.CLASS_UNATTRIBUTED:
+        annotated["reason"] = (
+            f"{reason}. A personal limit reset redeemed on claude.ai or in the "
+            "desktop app is one of them"
+        )
+    else:
+        # Neither an early clear nor agreement between accounts proves its
+        # cause. Claude personal limit resets include weekly windows.
+        annotated["reason"] = (
+            f"{reason}. Personal limit resets can also restore weekly limits, and "
+            "this response contains no redemption ledger"
+        )
+
+
 def annotate(
     event: dict[str, Any],
     row: dict[str, Any],
@@ -622,7 +807,7 @@ def annotate(
 ) -> dict[str, Any]:
     """Add the Anthropic-specific fields to one detector event.
 
-    Two things happen here that the shared detector cannot do:
+    Three things happen here that the shared detector cannot do:
 
     1. A clear on the 5-hour window is re-classified `session_only`. Natural
        expiry and the feature-flagged `/limit-reset` command produce exactly
@@ -631,7 +816,12 @@ def annotate(
        for the audit trail, but the field every reader in this repository maps
        to a public verdict now holds a string that appears in none of those
        maps.
-    2. A weekly clear records what the OTHER account's weekly window was doing.
+    2. An early weekly clear is attributed against the profile's history
+       (attribute_weekly_clear).
+    3. A weekly clear records what the OTHER account's weekly window was doing.
+
+    An account change passes through with the account fields only: it is not
+    a clear on any window, so none of the three applies.
     """
     annotated = dict(event)
     annotated["vendor"] = EXPORT_VENDOR
@@ -639,11 +829,18 @@ def annotate(
     annotated["limit_kind"] = row.get("limit_kind")
     annotated["model"] = row.get("model")
     annotated["model_name"] = row.get("model_name")
+    if annotated.get("kind") == qp.EVENT_ACCOUNT_CHANGE:
+        return annotated
+    # The window as both accounts name it, so a pair can be matched on it.
+    annotated["window_family"] = window_key(row)
 
     minutes = row.get("window_minutes")
     if minutes == SESSION_MINUTES and annotated.get("classification"):
         annotated["gated_classification"] = annotated["classification"]
         annotated["classification"] = CLASS_SESSION_ONLY
+        if isinstance(annotated.get("checks"), dict):
+            # Never attributed, so the history is never read for one.
+            annotated["checks"] = {**annotated["checks"], "local_trace": qp.TRACE_NA}
         annotated["reason"] = (
             "5-hour window: ordinary expiry and the /limit-reset command produce "
             "the same clear, so this is never evidence about the vendor "
@@ -654,26 +851,22 @@ def annotate(
         moment = annotated.get("clear_bracket_hi") or annotated.get("detected_at")
         if (
             annotated.get("kind") == qp.EVENT_CLEAR
-            and isinstance(moment, int)
             and annotated.get("classification") == qp.CLASS_GLOBAL
         ):
-            # Only EARLY clears are compared for account concordance. The two
-            # accounts sit on different per-account
-            # 7-day lattices, so one's ordinary weekly expiry always lands
-            # while the other's window is busy — the steady state. Recording
-            # that as `accounts_disagree` would page the owner roughly weekly
-            # for a probe working exactly as designed.
+            attribute_weekly_clear(annotated)
+        if (
+            annotated.get("kind") == qp.EVENT_CLEAR
+            and isinstance(moment, int)
+            and annotated.get("classification") in (qp.CLASS_GLOBAL, qp.CLASS_UNATTRIBUTED)
+        ):
+            # Only EARLY clears nothing on our side explains are compared for
+            # account concordance. The two accounts sit on different
+            # per-account 7-day lattices, so one's ordinary weekly expiry
+            # always lands while the other's window is busy — the steady
+            # state. Recording that as `accounts_disagree` would flag one
+            # roughly weekly for a probe working exactly as designed.
             annotated["concordance"] = record_concordance(
                 claude_state, detector, str(row.get("account")), window_key(row), moment
-            )
-        if annotated.get("classification") == qp.CLASS_GLOBAL:
-            # Neither an early clear nor agreement between accounts proves
-            # its cause. Claude personal limit resets include weekly windows.
-            annotated["detector_reason"] = annotated.get("reason")
-            annotated["reason"] = (
-                f"cleared {annotated.get('early_by_seconds')}s before its scheduled "
-                "expiry; cause unverified. Personal limit resets can also restore "
-                "weekly limits, and this response contains no redemption ledger"
             )
     return annotated
 
@@ -704,6 +897,9 @@ def log_events(events: list[dict[str, Any]]) -> None:
                 f"at {event.get('reverted_at')} — not a reset"
             )
             continue
+        if event.get("kind") == qp.EVENT_ACCOUNT_CHANGE:
+            log(f"ACCOUNT CHANGED {label} {event.get('slot')} — {event.get('reason')}")
+            continue
         line = (
             f"DETECTED [{event.get('classification')}] {label} "
             f"{event.get('slot')} "
@@ -713,9 +909,10 @@ def log_events(events: list[dict[str, Any]]) -> None:
         )
         log(line)
         if event.get("concordance") == CONCORDANCE_DISAGREE:
-            # An owner alert, not evidence: subscriptions.py reads the
-            # `concordance` field off this same record. The journal line is
-            # what a human tailing the unit sees in the meantime.
+            # Not evidence, and not yet an alert either: nothing in
+            # subscriptions.py reads `concordance`, and groundtruth only uses
+            # it to skip the clear. This journal line is what a human tailing
+            # the unit sees.
             log(
                 f"ACCOUNTS DISAGREE {label} cleared its weekly window while another "
                 "account's weekly window was readable and did not — withheld from "
@@ -856,16 +1053,21 @@ def window_reference(event: dict[str, Any]) -> str:
 
 
 def concordance_clause(event: dict[str, Any]) -> str:
-    """What the other Max 20x account's weekly window was doing, in words."""
+    """What the other account's weekly window was doing, in words.
+
+    "Account", not the plan: the two no longer share one (account a has been
+    on a Team org since 2026-10-11), and the coverage sentence already says
+    which plans the accounts are on.
+    """
     answer = event.get("concordance")
     if answer == CONCORDANCE_AGREEING:
         return (
-            "Our other Max 20x account's weekly window cleared inside the same two "
+            "Our other account's weekly window cleared inside the same two "
             "polls, so two accounts saw it."
         )
     if answer == CONCORDANCE_DISAGREE:
         return (
-            "Our other Max 20x account's weekly window was readable and did not "
+            "Our other account's weekly window was readable and did not "
             "clear, so this is one account's window and nothing wider."
         )
     # `unknown` covers several causes at once — the other account was idle,
@@ -873,7 +1075,7 @@ def concordance_clause(event: dict[str, Any]) -> str:
     # detection floor when this event was written. Naming one of them would be
     # inventing a reason, so the sentence claims only the absence of support.
     return (
-        "We cannot say what our other Max 20x account's weekly window was doing at "
+        "We cannot say what our other account's weekly window was doing at "
         "that moment, so nothing corroborates this."
     )
 
@@ -924,6 +1126,9 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
             "the clear, so nothing more is claimed about it.",
         )
 
+    if verdict == qp.VERDICT_ACCOUNT_CHANGE:
+        return qp.account_change_sentences(event, reference)
+
     if event.get("classification") == CLASS_SESSION_ONLY:
         return (
             f"{subject} cleared.",
@@ -944,6 +1149,17 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         # The clear is bracketed between two polls, so the true gap is at least
         # this: measured from the later end, which is the conservative one.
         gap = f"at least {hours} hours {gap}"
+
+    if verdict == qp.VERDICT_UNATTRIBUTED:
+        return (
+            f"{subject} cleared {early} early, with no cause on our side that this "
+            "probe can see.",
+            f"{change} {moment}, {gap}; {qp.checked_clause(event)}, and the profile's "
+            "history shows no Claude Code reset menu in the hour before. A personal "
+            "limit reset redeemed on claude.ai or in the desktop app leaves no trace "
+            "this probe can read, so one account alone cannot say whose reset this "
+            f"was. {concordance_clause(event)}",
+        )
 
     if verdict == qp.VERDICT_UNRESOLVED and event.get("classification") == qp.CLASS_GLOBAL:
         return (
@@ -1003,8 +1219,12 @@ def observation(event: dict[str, Any], retracted_ids: set[str]) -> dict[str, Any
     field (the model display name, a reason string) cannot leak by being here.
     """
     verdict = verdict_of(event)
+    bracket_lo, bracket_hi = event.get("clear_bracket_lo"), event.get("clear_bracket_hi")
     if event.get("kind") == qp.EVENT_RETRACTION:
         observed_at = event.get("reverted_at")
+    elif event.get("kind") == qp.EVENT_ACCOUNT_CHANGE:
+        observed_at = bracket_hi = event.get("t")
+        bracket_lo = event.get("seen_before")
     else:
         observed_at = event.get("clear_bracket_hi") or event.get("detected_at")
     headline, evidence = observation_sentences(event, verdict)
@@ -1016,8 +1236,8 @@ def observation(event: dict[str, Any], retracted_ids: set[str]) -> dict[str, Any
         "public": is_public(event, retracted_ids),
         "headline": headline,
         "evidence": evidence,
-        "observed_before": qp.iso_utc(event.get("clear_bracket_lo")),
-        "observed_after": qp.iso_utc(event.get("clear_bracket_hi")),
+        "observed_before": qp.iso_utc(bracket_lo),
+        "observed_after": qp.iso_utc(bracket_hi),
         "early_by_hours": qp.early_by_hours(event.get("early_by_seconds")),
     }
     if event.get("kind") == qp.EVENT_CLEAR and event.get("event_id") in retracted_ids:
@@ -1025,10 +1245,62 @@ def observation(event: dict[str, Any], retracted_ids: set[str]) -> dict[str, Any
     return row
 
 
+def plan_name(plan: Any) -> str | None:
+    """`Max` / `Team` for a subscriptionType, or None when there is nothing safe to print."""
+    if not isinstance(plan, str) or not plan.strip():
+        return None
+    key = plan.strip().lower()
+    if key in PLAN_NAMES:
+        return PLAN_NAMES[key]
+    # An unknown plan is printed only if it reads like one word of a plan
+    # name; anything else in that field is not ours to publish.
+    return key.capitalize() if re.fullmatch(r"[a-z][a-z0-9]{0,19}", key) else None
+
+
+def plans_by_account(detector: qp.Detector) -> dict[str, str | None]:
+    """Each account's plan as of its NEWEST row in the cursor.
+
+    Newest across the account's slots, not any slot: when account a moved to
+    a Team org its per-model weekly slot stopped being reported, and that
+    slot's last row still says Max.
+    """
+    newest: dict[str, tuple[int, str | None]] = {}
+    for key, state in detector.slots.items():
+        label = account_of_slot(key)
+        last = state.get("last") if isinstance(state, dict) else None
+        if label is None or not isinstance(last, dict) or not isinstance(last.get("t"), int):
+            continue
+        if label not in newest or last["t"] > newest[label][0]:
+            newest[label] = (last["t"], last.get("plan_type"))
+    return {label: plan for label, (_, plan) in newest.items()}
+
+
+def accounts_phrase(plans: dict[str, Any] | None) -> str:
+    """The only public description of the accounts: how many, and on what plans.
+
+    Derived from what the accounts last read, never written down: the fixed
+    phrase "Two Max 20x accounts" stopped being true when account a's plan
+    went max -> team at 2026-10-11 21:03 UTC. A plan is named only when EVERY
+    account's was read; half a description would read as the whole one.
+    Never a name, an email or an id.
+    """
+    count = NUMBER_WORDS.get(len(LABELS), str(len(LABELS)))
+    names = [plan_name((plans or {}).get(label)) for label in LABELS]
+    distinct = sorted(set(names)) if all(names) else []
+    if len(distinct) == 1:
+        head = f"{count} {distinct[0]} accounts"
+    elif distinct:
+        head = f"{count} accounts ({' and '.join(distinct)})"
+    else:
+        head = f"{count} accounts"
+    return f"{head} on one operator machine"
+
+
 def coverage_sentence(
     peaks: dict[str, float],
     first_sample_t: int | None,
     counts: dict[str, int] | None = None,
+    plans: dict[str, Any] | None = None,
 ) -> str:
     """One honest sentence naming the population this probe speaks for.
 
@@ -1039,6 +1311,7 @@ def coverage_sentence(
     true the first week it is.
     """
     counts = counts or {}
+    population = accounts_phrase(plans)
     weekly_peak: dict[str, float] = {}
     weekly_samples: dict[str, int] = {}
     for key, peak in peaks.items():
@@ -1054,7 +1327,7 @@ def coverage_sentence(
     )
     if not weekly_peak:
         return (
-            f"{ACCOUNTS_PHRASE}. No weekly samples are on record on this host, so "
+            f"{population}. No weekly samples are on record on this host, so "
             f"nothing can be observed yet. {session_note}"
         )
 
@@ -1065,14 +1338,14 @@ def coverage_sentence(
 
     if not active:
         return (
-            f"{ACCOUNTS_PHRASE}, weekly windows only. No weekly window has carried more "
+            f"{population}, weekly windows only. No weekly window has carried more "
             f"than {max(weekly_peak.values()):g}% of its limit{since}, under the "
             f"{qp.CLEAR_DROP_MIN:g}-point drop a clear needs, so nothing can be observed "
             f"yet. {session_note}"
         )
 
     parts = [
-        f"{ACCOUNTS_PHRASE}, weekly windows only; "
+        f"{population}, weekly windows only; "
         f"{'account ' + ' and '.join(active) if len(active) == 1 else 'accounts ' + ' and '.join(active)}"
         f" {'has' if len(active) == 1 else 'have'} carried enough usage for a clear to show."
     ]
@@ -1163,7 +1436,12 @@ def export_observations(path: Path, now: int | None = None) -> int:
             "status": status,
             "last_verified_at": qp.iso_utc(verified_at),
             "detectable_now": detectable,
-            "coverage": coverage_sentence(peaks, first_sample_t, sample_counts),
+            "coverage": coverage_sentence(
+                peaks,
+                first_sample_t,
+                sample_counts,
+                plans_by_account(qp.Detector(load_cursor())),
+            ),
             # Outside the shared contract and not copied onto the site by
             # build.py's whitelist. Kept because this file is also what the
             # owner reads when the probe itself is the thing that is wrong.
@@ -1195,9 +1473,14 @@ class AccountProbe:
     observed" in front of a subscriber.
     """
 
-    def __init__(self, label: str, path: Path) -> None:
+    def __init__(self, label: str, path: Path, config_path: Path | None = None) -> None:
         self.label = label
         self.path = path
+        # Where this profile records who is signed in. Resolved once, like
+        # the credential path; the FILE is read on every poll.
+        self.config_path = (
+            config_path if config_path is not None else profile_config_paths()[label]
+        )
         self.health_label = HEALTH_LABELS.get(label, label)
         self.last_ok_at: int | None = None
         self.blind_since: int | None = None
@@ -1261,9 +1544,13 @@ class AccountProbe:
             return None
 
         self.attempted = True
+        # Read beside the credential it belongs with: a /login rewrites both.
+        account_fp = read_account_fingerprint(self.config_path)
         try:
             payload = fetch_usage(token, now=now)
-            rows = normalise_usage(payload, self.label, now, plan_type=subscription)
+            rows = normalise_usage(
+                payload, self.label, now, plan_type=subscription, account_fp=account_fp
+            )
         except ThrottledError as exc:
             self._throttle(now, exc)
             return None
@@ -1396,8 +1683,10 @@ def run(once: bool) -> int:
     claude_state = cursor.get("claude")
     if not isinstance(claude_state, dict):
         claude_state = {}
+    configs = profile_config_paths()
     probes = [
-        AccountProbe(label, path) for label, path in sorted(credential_paths().items())
+        AccountProbe(label, path, configs[label])
+        for label, path in sorted(credential_paths().items())
     ]
     started_at = int(time.time())
     for probe in probes:
@@ -1461,12 +1750,18 @@ def show() -> int:
             continue
         entry["credential_expires_at"] = qp.iso_utc(expires_at)
         entry["subscription_type"] = subscription
+        account_fp = read_account_fingerprint(profile_config_paths()[label])
+        entry["account_fp"] = account_fp
         if expires_at is not None and expires_at <= now:
             entry["error"] = "credential expiresAt has passed; no request was sent"
         else:
             try:
                 entry["rows"] = normalise_usage(
-                    fetch_usage(token, now=now), label, now, plan_type=subscription
+                    fetch_usage(token, now=now),
+                    label,
+                    now,
+                    plan_type=subscription,
+                    account_fp=account_fp,
                 )
                 read_any = True
             except qp.ProbeError as exc:

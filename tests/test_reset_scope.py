@@ -7,6 +7,8 @@ from pathlib import Path
 
 from scripts import build, claude_probe as cp, groundtruth as gt, quota_probe as qp
 from tests.test_claude_probe import DAY, T0, usage_payload
+# Never the owner's real profile files: the same isolation that suite uses.
+from tests.test_claude_probe import setUpModule, tearDownModule  # noqa: F401
 
 
 class ResetScopeTests(unittest.TestCase):

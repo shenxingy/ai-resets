@@ -796,6 +796,25 @@ def unchecked(checks: dict[str, Any]) -> list[str]:
     return [name for name, ok in passing.items() if checks.get(name) not in ok]
 
 
+def check_details(
+    lo: int, hi: int, poll_seconds: int, *, carried: bool = False, anchor_jump: bool = False
+) -> dict[str, str]:
+    """The measured specifics behind a failed credit or bracket check."""
+    details = {}
+    if carried:
+        # Say which reading was inferred: "unchanged" is weaker evidence when
+        # the field itself was absent on the row that showed the clear.
+        details["credit"] = "the bank was taken from the last readable count"
+    if anchor_jump:
+        details["bracket"] = f"the clear was recovered across a {hi - lo}s blind gap (anchor_jump)"
+    elif hi - lo > TIGHT_BRACKET_POLLS * poll_seconds:
+        details["bracket"] = (
+            f"the clear is bracketed by {hi - lo}s, more than "
+            f"{TIGHT_BRACKET_POLLS * poll_seconds}s"
+        )
+    return details
+
+
 def attribute_early_clear(
     checks: dict[str, Any],
     early_by: int,
@@ -823,7 +842,7 @@ def attribute_early_clear(
         return CLASS_UNATTRIBUTED, (
             f"cleared {early_by}s early; checked and excluded: same account, same "
             f"plan, {credit}{trace}, a tight bracket. A reset the account holder "
-            "bought leaves no trace this probe can read"
+            "paid for or redeemed elsewhere leaves no trace this probe can read"
         )
     details = details or {}
     missing = "; ".join(details.get(name) or UNCHECKED_REASONS[name] for name in failing)
@@ -931,21 +950,11 @@ def classify(
             # time and re-runs attribute_early_clear. Until it does, the clear
             # cannot be unattributed.
             checks["local_trace"] = CHECK_UNREAD
-        details = {}
-        if carried:
-            # Say which reading was inferred: "unchanged" is weaker evidence
-            # when the field itself was absent on the row that showed the clear.
-            details["credit"] = "the bank was taken from the last readable count"
-        if anchor_jump:
-            details["bracket"] = (
-                f"the clear was recovered across a {hi - lo}s blind gap (anchor_jump)"
-            )
-        elif checks["bracket"] != BRACKET_TIGHT:
-            details["bracket"] = (
-                f"the clear is bracketed by {hi - lo}s, more than "
-                f"{TIGHT_BRACKET_POLLS * poll}s"
-            )
-        verdict, reason = attribute_early_clear(checks, early_by, details)
+        verdict, reason = attribute_early_clear(
+            checks,
+            early_by,
+            check_details(lo, hi, poll, carried=carried, anchor_jump=anchor_jump),
+        )
 
     return {
         "classification": verdict,
