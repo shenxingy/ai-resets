@@ -309,6 +309,12 @@ MANAGED_ALERT_PREFIXES = ("probe:", "data:")
 # still page, so a trigger this long after the last one sends one reminder.
 UNIT_ALERT_REPEAT_SECONDS = 6 * 3600
 
+# How long a Claude OAuth credential may read stale before the owner hears
+# about it. The plan's threshold, "token stale >30 min": the token refreshes
+# on the owner's next use of that profile, so anything shorter pages about
+# states that heal themselves.
+TOKEN_STALE_ALERT_SECONDS = 30 * 60
+
 
 # Follow-up wording. Like the (kind, stage) tables in scripts/incidents.py
 # these are looked up, never composed from post text. The retraction sentence
@@ -2089,6 +2095,37 @@ def health_conditions(
         conditions["probe:codex:throttled"] = f"The Codex probe is throttled ({age} since its last read)."
     elif status["status"] == "token_stale":
         conditions["probe:codex:token"] = "The Codex probe's credential is stale; it cannot read the quota."
+
+    # The Claude probe carries one health block per account, and each block
+    # can page the owner. Token staleness gets a grace period, unlike the
+    # Codex one: an OAuth expiry heals itself the next time that profile is
+    # used, so alerting the moment `expiresAt` passes would page the owner
+    # about a state their own editor is about to fix. Thirty minutes stale
+    # means nobody is coming. A label with no block at all is NOT a
+    # condition: it means the probe never ran here, and its total death is
+    # caught within 15 minutes by the block going stale (blind) instead.
+    for label in ("claude:a", "claude:b"):
+        account = label.rsplit(":", 1)[-1]
+        claude = probe_status(health, label, now)
+        age = stale_age_line(claude)
+        if claude["status"] == "blind":
+            conditions[f"probe:{label}:blind"] = (
+                f"The Claude probe has not read account {account} for {age} "
+                f"({claude.get('consecutive_failures') or 0} consecutive failures)."
+            )
+        elif claude["status"] == "throttled":
+            conditions[f"probe:{label}:throttled"] = (
+                f"The Claude probe is throttled on account {account} "
+                f"({age} since its last read)."
+            )
+        elif claude["status"] == "token_stale":
+            last_ok = claude.get("last_ok_at")
+            if not isinstance(last_ok, (int, float)) or now - int(last_ok) > TOKEN_STALE_ALERT_SECONDS:
+                conditions[f"probe:{label}:token"] = (
+                    f"The Claude probe's credential for account {account} has "
+                    f"been stale for {age}. It refreshes the next time that "
+                    "profile is used; nothing here may refresh it."
+                )
 
     generated_at = data.get("generated_at")
     if isinstance(generated_at, str) and generated_at:

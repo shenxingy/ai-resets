@@ -880,6 +880,119 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertFalse(store.migrate_deliveries_held())
 
 
+class ClaudeProbeAlertTests(unittest.TestCase):
+    """The Claude probe carries one health block per account, and each block
+    can page the owner. The token case gets 30 minutes of grace: an OAuth
+    expiry heals itself the next time that profile is used, and the plan's
+    threshold exists so a transient expiry never pages anyone."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        root = Path(self.tempdir.name)
+        self.state = root / "state"
+        self.state.mkdir()
+        self.config = Config(
+            api_key="test-key",
+            secret="s" * 48,
+            db_path=root / "subscriptions.db",
+            public_url="https://resets.example.test",
+            from_email="AI Reset Watch <updates@example.test>",
+            data_file=root / "data.json",
+            state_dir=self.state,
+            owner_email="owner@example.test",
+        )
+        self.store = Store(self.config.db_path)
+        self.store.init()
+        self.mailer = FakeMailer()
+        self.app = SubscriptionApp(self.config, self.store, self.mailer)
+        self.store.discover_events([event("openai:baseline", "openai")], now=NOW)
+        self.config.data_file.write_text(
+            json.dumps({"generated_at": iso(NOW - 60), "vendors": {}})
+        )
+
+    def write_health(self, **claude_blocks):
+        entry = {
+            "label": "codex",
+            "updated_at": NOW - 30,
+            "last_ok_at": NOW - 30,
+            "last_sample_t": NOW - 30,
+            "consecutive_failures": 0,
+            "blind_since": None,
+            "throttled_until": None,
+            "token_stale": False,
+            "detectable_now": {"codex/10080": True},
+        }
+        health = {"codex": entry}
+        for label, overrides in claude_blocks.items():
+            block = {
+                "label": label,
+                "updated_at": NOW - 30,
+                "last_ok_at": NOW - 30,
+                "last_sample_t": NOW - 30,
+                "consecutive_failures": 0,
+                "blind_since": None,
+                "throttled_until": None,
+                "token_stale": False,
+                "detectable_now": {},
+                "last_error": None,
+            }
+            block.update(overrides)
+            health[label] = block
+        (self.state / "probe_health.json").write_text(json.dumps(health))
+
+    def owner_mails(self):
+        return [m for m in self.mailer.messages if m["to"] == "owner@example.test"]
+
+    def notify(self, now=NOW):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            run_notifier(self.config, self.app, now=now)
+        return buffer.getvalue()
+
+    def test_a_healthy_claude_probe_alerts_nobody(self):
+        self.write_health(**{"claude:a": {}, "claude:b": {}})
+        self.notify()
+        self.assertEqual(self.owner_mails(), [])
+
+    def test_a_missing_claude_block_is_not_an_outage(self):
+        # A host that never ran the Claude probe has nothing to recover to;
+        # total death of a running probe surfaces as blind within 15 minutes.
+        self.write_health()
+        self.notify()
+        self.assertEqual(self.owner_mails(), [])
+
+    def test_a_freshly_expired_token_does_not_page(self):
+        self.write_health(**{"claude:b": {"token_stale": True, "last_ok_at": NOW - 240}})
+        self.notify()
+        self.assertEqual(self.owner_mails(), [])
+
+    def test_a_stale_token_pages_once_and_recovers_once(self):
+        self.write_health(**{"claude:b": {"token_stale": True, "last_ok_at": NOW - 7200}})
+        self.notify()
+        alerts = self.owner_mails()
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("probe:claude:b:token", alerts[0]["subject"])
+        self.assertIn("account b", alerts[0]["body"] if "body" in alerts[0] else alerts[0]["subject"] + str(alerts[0]))
+
+        self.notify()
+        self.assertEqual(len(self.owner_mails()), 1)
+
+        self.write_health(**{"claude:b": {}})
+        self.notify()
+        alerts = self.owner_mails()
+        self.assertEqual(len(alerts), 2)
+        self.assertIn("recovered: probe:claude:b:token", alerts[1]["subject"])
+
+    def test_a_blind_claude_account_pages(self):
+        self.write_health(
+            **{"claude:a": {"updated_at": NOW - 3600, "last_ok_at": NOW - 3600, "consecutive_failures": 40}}
+        )
+        self.notify()
+        subjects = [m["subject"] for m in self.owner_mails()]
+        self.assertTrue(any("probe:claude:a:blind" in s for s in subjects), subjects)
+
+
 class IncidentKeyTests(unittest.TestCase):
     """One vendor action, one key — including before anyone has posted about it."""
 

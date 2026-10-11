@@ -28,7 +28,11 @@ from pathlib import Path
 from typing import Any
 
 from scripts.timefmt import describe_age, format_epoch_pacific
-from scripts.quota_probe import VERDICT_OF_CLASS
+from scripts.quota_probe import (
+    VERDICT_CREDIT_GRANTED,
+    VERDICT_LIMIT_CHANGE,
+    VERDICT_OF_CLASS,
+)
 
 DEFAULT_STATE_DIR = Path("/var/lib/ai-resets")
 
@@ -172,13 +176,17 @@ def clear_observations(
     state_dir: Path | str = DEFAULT_STATE_DIR,
     *,
     vendor: str = "openai",
+    include_retracted: bool = False,
 ) -> list[dict[str, Any]]:
     """Every window clear the probe recorded, with what it concluded and why.
 
     Read from the probe's own append-only event log rather than from the
     exported file, so the email keeps working when an export has not run.
-    Retracted clears are dropped: a clear we have already withdrawn is not
-    evidence of anything.
+    Retracted clears are dropped by default: a clear we have already withdrawn
+    is not evidence of anything. The fusion layer passes include_retracted and
+    gets them back flagged with `retracted`: a withdrawn clear under a standing
+    announcement is itself a lifecycle state (reverted_on_our_account), which
+    is a different thing from evidence.
     """
     spec = PROBE_SPECS.get(vendor)
     path = Path(state_dir) / (spec.events_filename if spec else EVENTS_FILENAME)
@@ -205,7 +213,8 @@ def clear_observations(
         return []
     out = []
     for key, event in clears.items():
-        if key in retracted or not event.get("confirmed"):
+        withdrawn = key in retracted
+        if (withdrawn and not include_retracted) or not event.get("confirmed"):
             continue
         if event.get("concordance") == "accounts_disagree":
             # One account's weekly window cleared while another readable
@@ -218,22 +227,74 @@ def clear_observations(
         moment = event.get("detected_at")
         if not isinstance(moment, int):
             continue
-        out.append(
-            {
-                "key": key,
-                "t": moment,
-                "verdict": _INTERNAL_TO_VERDICT.get(
-                    str(event.get("classification")), VERDICT_UNRESOLVED
-                ),
-                "used_before": event.get("used_before"),
-                "used_after": event.get("used_after"),
-                "early_by_seconds": event.get("early_by_seconds"),
-                "credits_before": event.get("credits_before"),
-                "credits_after": event.get("credits_after"),
-                "credits_carried": bool(event.get("credits_carried")),
-            }
-        )
+        row = {
+            "key": key,
+            "t": moment,
+            "verdict": _INTERNAL_TO_VERDICT.get(
+                str(event.get("classification")), VERDICT_UNRESOLVED
+            ),
+            "used_before": event.get("used_before"),
+            "used_after": event.get("used_after"),
+            "early_by_seconds": event.get("early_by_seconds"),
+            "credits_before": event.get("credits_before"),
+            "credits_after": event.get("credits_after"),
+            "credits_carried": bool(event.get("credits_carried")),
+        }
+        if include_retracted:
+            row["retracted"] = withdrawn
+        out.append(row)
     return sorted(out, key=lambda o: o["t"])
+
+
+def incident_observations(
+    state_dir: Path | str = DEFAULT_STATE_DIR,
+    *,
+    vendor: str = "openai",
+) -> list[dict[str, Any]]:
+    """The per-vendor observation stream the fusion layer matches against.
+
+    clear_observations answers "what cleared"; fusion also needs the two
+    records that corroborate the other announcement kinds — a credit grant
+    confirms a banked reset and a rescale confirms a policy change (the
+    CONFIRMING_VERDICTS table in incidents.py). Retracted clears stay in,
+    flagged, because a withdrawn clear under a standing announcement is the
+    reverted_on_our_account state, not an absence of evidence.
+    """
+    spec = PROBE_SPECS.get(vendor)
+    if spec is None:
+        return []
+    rows = clear_observations(state_dir, vendor=vendor, include_retracted=True)
+    path = Path(state_dir) / spec.events_filename
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                kind = event.get("kind")
+                if kind == "credit_granted":
+                    moment, verdict = event.get("t"), VERDICT_CREDIT_GRANTED
+                elif kind == "limit_change":
+                    moment = event.get("clear_bracket_hi") or event.get("detected_at")
+                    verdict = VERDICT_LIMIT_CHANGE
+                else:
+                    continue
+                if not isinstance(moment, int):
+                    continue
+                rows.append(
+                    {
+                        "key": event.get("event_id") or f"{kind}:{moment}",
+                        "t": moment,
+                        "verdict": verdict,
+                        "retracted": False,
+                    }
+                )
+    except OSError:
+        pass
+    return sorted(rows, key=lambda o: o["t"])
 
 
 def observation_near(

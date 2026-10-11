@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import groundtruth  # noqa: E402
+from scripts import incidents  # noqa: E402
 from scripts.timefmt import (  # noqa: E402
     PACIFIC,
     describe_age,
@@ -776,12 +777,90 @@ def iso_z(epoch):
     return datetime.fromtimestamp(int(epoch), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# ─── Incident fusion: what each announcement IS, written once ────────────────
+#
+# The lifecycle states (docs/robustness-plan.md, "Incident lifecycle") are
+# derived here, at build time, and stamped onto every event so the page and
+# the notifier read `status` from site/data.json instead of each recomputing
+# it. Probe-first rows are NOT created here yet: what a single-account clear
+# may claim on its own is an owner decision (the plan's Decision row), and
+# until then an unmatched own-account clear stays in the observations column
+# only.
+
+
+def match_observation(event, clears):
+    """The one probe clear that speaks to this announcement, if any.
+
+    A clear is a candidate when it sits inside the +-6 h match window and is
+    either a corroborating verdict for the announcement's own kind (a banked
+    reset is confirmed by a credit grant, never by a window clear) or a
+    retraction — a withdrawn clear under a standing announcement is the
+    `reverted_on_our_account` footnote, and fusion must see it precisely
+    because it is no longer evidence.
+    """
+    announced = event_epoch(event)
+    if announced is None:
+        return None
+    confirming = incidents.CONFIRMING_VERDICTS.get(incidents.event_kind(event), ())
+    candidates = [
+        clear
+        for clear in clears
+        if abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
+        and (clear.get("retracted") or clear["verdict"] in confirming)
+    ]
+    if not candidates:
+        return None
+    nearest = min(candidates, key=lambda clear: abs(clear["t"] - announced))
+    return {
+        "verdict": nearest["verdict"],
+        "observed_at": iso_z(nearest["t"]),
+        "retracted": bool(nearest.get("retracted")),
+    }
+
+
+def fuse_incidents(vendors, state_dir=None, now=None):
+    """Stamp every event with its incident `status` and `incident_key`.
+
+    One clock for the whole build, the same instant the notifier's own guards
+    use, so a forecast cannot be "still watching" in data.json and "lapsed" in
+    the email of the same minute. A vendor with no probe fuses against an
+    empty observation list and a None probe: `forecast_lapsed` then stays
+    unreachable, which is the honest answer when nothing is watching.
+    """
+    state = Path(state_dir) if state_dir else groundtruth.DEFAULT_STATE_DIR
+    for key, vendor in vendors.items():
+        events = vendor.get("events") or []
+        if not events:
+            continue
+        spec = groundtruth.PROBE_SPECS.get(key)
+        if spec is None or not spec.exists():
+            clears = []
+        else:
+            try:
+                clears = groundtruth.incident_observations(state, vendor=key)
+            except Exception as error:  # never take the publish down for fusion
+                print(f"skipping {key} fusion: {error}")
+                clears = []
+        probe = vendor.get("probe")
+        for event in events:
+            event["status"] = incidents.derive_status(
+                event,
+                match_observation(event, clears),
+                probe if isinstance(probe, dict) else None,
+                now=now,
+            )
+            stable_id = str(event.get("id") or "").strip()
+            if stable_id:
+                event["incident_key"] = f"{key}:{stable_id}"
+
+
 def main():
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     vendors = load_vendors(DATA_DIR)
     attach_observations(vendors, OBSERVED_DIR)
     annotate_announcements(vendors)
+    fuse_incidents(vendors, now=generated_at)
 
-    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     out = {"generated_at": generated_at, "vendors": vendors}
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUT_FILE.write_text(json.dumps(out, indent=2), encoding="utf-8")

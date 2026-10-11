@@ -474,5 +474,101 @@ class StampStaleTest(unittest.TestCase):
         self.assertEqual(len(data["events"]), 1)
 
 
+class FirstSeenTests(unittest.TestCase):
+    """first_seen_at pins when WE first saw a row; derive_status reads it for
+    the historical cutoff, so a late-discovered old post must never read as
+    fresh and a live-tracked row must never read as late."""
+
+    def test_a_known_row_keeps_its_first_sighting(self):
+        events = [{"id": "1", "announced_at": "2026-08-01T00:00:00Z"}]
+        cached = [{"id": "1", "announced_at": "2026-08-01T00:00:00Z", "first_seen_at": "2026-08-01T01:00:00Z"}]
+        (row,) = fetch_openai.merge_first_seen(events, cached, "2026-10-01T00:00:00Z")
+        self.assertEqual(row["first_seen_at"], "2026-08-01T01:00:00Z")
+
+    def test_a_row_on_disk_before_this_field_was_followed_live(self):
+        events = [{"id": "1", "announced_at": "2026-08-01T00:00:00Z"}]
+        cached = [{"id": "1", "announced_at": "2026-08-01T00:00:00Z"}]
+        (row,) = fetch_openai.merge_first_seen(events, cached, "2026-10-01T00:00:00Z")
+        self.assertEqual(row["first_seen_at"], "2026-08-01T00:00:00Z")
+
+    def test_a_genuinely_new_row_is_stamped_now(self):
+        events = [{"id": "2", "announced_at": "2026-08-01T00:00:00Z"}]
+        cached = [{"id": "1", "announced_at": "2026-07-01T00:00:00Z"}]
+        (row,) = fetch_openai.merge_first_seen(events, cached, "2026-10-01T00:00:00Z")
+        self.assertEqual(row["first_seen_at"], "2026-10-01T00:00:00Z")
+
+
+class VerificationTests(unittest.TestCase):
+    """The tracker is a witness; tweet-result is what makes a row trusted."""
+
+    def setUp(self):
+        self.tempdir = TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.posts = Path(self.tempdir.name) / "posts.json"
+
+    def test_a_verified_post_replaces_the_tracker_paraphrase(self):
+        events = [
+            {
+                "id": "2093801758665715784",
+                "text": "tracker summary",
+                "url": "https://x.com/thsottiaux/status/2093801758665715784",
+                "announced_at": "2026-08-29T20:43:34.000Z",
+                "kind": "reset",
+                "text_verified": False,
+                "text_source": "tracker",
+                "date_source": "tracker",
+                "announcer": "thsottiaux",
+            }
+        ]
+        record = {
+            "verified": True,
+            "text": "We are reseting usage for all paid users.",
+            "created_at": "2026-08-29T20:43:34Z",
+            "screen_name": "thsottiaux",
+            "is_reply": False,
+        }
+        with mock.patch.object(fetch_openai.fetch_anthropic, "load_posts", return_value={}):
+            with mock.patch.object(
+                fetch_openai.fetch_anthropic, "verify_ids",
+                return_value=({"2093801758665715784": record}, 1),
+            ):
+                with mock.patch.object(fetch_openai.fetch_anthropic, "POSTS_FILE", self.posts):
+                    rows, spent = fetch_openai.verify_events(events, "2026-10-11T00:00:00Z")
+        self.assertEqual(spent, 1)
+        self.assertTrue(rows[0]["text_verified"])
+        self.assertEqual(rows[0]["text"], "We are reseting usage for all paid users.")
+        self.assertEqual(rows[0]["text_source"], "post")
+        self.assertFalse(rows[0]["post_is_reply"])
+
+    def test_an_unverified_row_stays_a_candidate(self):
+        events = [
+            {
+                "id": "2093801758665715784",
+                "text": "tracker summary",
+                "url": "https://x.com/thsottiaux/status/2093801758665715784",
+                "announced_at": "2026-08-29T20:43:34.000Z",
+                "kind": "reset",
+                "text_verified": False,
+                "text_source": "tracker",
+                "date_source": "tracker",
+            }
+        ]
+        with mock.patch.object(fetch_openai.fetch_anthropic, "load_posts", return_value={}):
+            with mock.patch.object(
+                fetch_openai.fetch_anthropic, "verify_ids", return_value=({}, 0)
+            ):
+                rows, spent = fetch_openai.verify_events(events, "2026-10-11T00:00:00Z")
+        self.assertEqual(spent, 0)
+        self.assertFalse(rows[0]["text_verified"])
+
+    def test_the_cache_is_written_only_when_calls_were_spent(self):
+        with mock.patch.object(fetch_openai.fetch_anthropic, "load_posts", return_value={}):
+            with mock.patch.object(
+                fetch_openai.fetch_anthropic, "verify_ids", return_value=({}, 0)
+            ):
+                fetch_openai.verify_events([], "2026-10-11T00:00:00Z")
+        self.assertFalse(self.posts.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

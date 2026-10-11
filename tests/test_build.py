@@ -698,3 +698,170 @@ class AnalyticsRenderTests(unittest.TestCase):
         for blank in ("", "   ", "\t"):
             with self.subTest(key=repr(blank)):
                 self.assertNotIn("phc_", self.render(blank))
+
+
+# ─── Incident fusion ─────────────────────────────────────────────────────────
+
+FUSION_NOW = 1791800000
+
+
+def fusion_iso(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def trusted_event(post_id, *, announced_at, **extra):
+    row = {
+        "id": post_id,
+        "kind": "reset",
+        "text": "We've reset everyone's weekly rate limits.",
+        "announced_at": fusion_iso(announced_at),
+        "first_seen_at": fusion_iso(announced_at + 60),
+        "text_verified": True,
+        "post_is_reply": False,
+        "announcer": "thsottiaux",
+    }
+    row.update(extra)
+    return row
+
+
+class FusionTests(unittest.TestCase):
+    """derive_status is the lifecycle; fuse_incidents is what makes it real.
+
+    Until the stamping landed, every row in site/data.json carried no status
+    and the notifier ran the pre-fusion fallback: any announcement mailable,
+    none of the lifecycle's states ever computed outside a test.
+    """
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.state = Path(self.tempdir.name)
+
+    def write_probe_log(self, records, name="quota_events.jsonl"):
+        (self.state / name).write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+
+    def fuse(self, events, *, probe=None, key="openai"):
+        vendors = {key: {"source": None, "fetched_at": None, "events": list(events)}}
+        if probe is not None:
+            vendors[key]["probe"] = probe
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        return vendors[key]["events"]
+
+    def clear(self, *, t, classification="global_candidate", event_id=None, confirmed=True):
+        return {
+            "event_id": event_id or f"codex/10080:{t}",
+            "kind": "clear",
+            "slot": "codex/10080",
+            "detected_at": t,
+            "used_before": 76.0,
+            "used_after": 0.0,
+            "classification": classification,
+            "confirmed": confirmed,
+        }
+
+    def test_a_fresh_trusted_announcement_is_announced_with_its_key(self):
+        (events,) = self.fuse([trusted_event("100", announced_at=FUSION_NOW - 3600)])
+        self.assertEqual(events["status"], "announced")
+        self.assertEqual(events["incident_key"], "openai:100")
+
+    def test_an_announcement_discovered_late_is_historical_never_mailable(self):
+        # The 2026-09-04 case: wiring a new source must not mail its archive.
+        (events,) = self.fuse(
+            [
+                trusted_event(
+                    "100",
+                    announced_at=FUSION_NOW - 72 * 3600,
+                    first_seen_at=fusion_iso(FUSION_NOW - 3600),
+                )
+            ]
+        )
+        self.assertEqual(events["status"], "historical")
+
+    def test_a_forecast_is_watched_not_reported_as_done(self):
+        (events,) = self.fuse(
+            [
+                trusted_event(
+                    "100",
+                    announced_at=FUSION_NOW - 2 * 3600,
+                    text="We will reset everyone's weekly limits, landing end of day.",
+                )
+            ],
+            probe={"status": "ok"},
+        )
+        self.assertEqual(events["status"], "forecast")
+
+    def test_a_forecast_past_its_window_lapses_only_under_a_healthy_probe(self):
+        event = trusted_event(
+            "100",
+            announced_at=FUSION_NOW - 25 * 3600,
+            text="We will reset everyone's weekly limits, landing later today.",
+        )
+        (lapsed,) = self.fuse([dict(event)], probe={"status": "ok"})
+        self.assertEqual(lapsed["status"], "forecast_lapsed")
+        (pending,) = self.fuse([dict(event)], probe={"status": "blind"})
+        self.assertEqual(pending["status"], "forecast")
+
+    def test_a_banked_announcement_is_confirmed_by_a_credit_grant(self):
+        # 2026-09-05 production finding: a banked reset never clears the
+        # window, so only the grant can corroborate it.
+        grant_t = FUSION_NOW - 3400
+        self.write_probe_log(
+            [{"kind": "credit_granted", "t": grant_t, "slot": "codex/10080"}]
+        )
+        (events,) = self.fuse(
+            [
+                trusted_event(
+                    "100",
+                    announced_at=FUSION_NOW - 3600,
+                    upstream_reset_type="banked",
+                    text="We have reset the usage limits and topped everyone up.",
+                )
+            ],
+            probe={"status": "ok"},
+        )
+        self.assertEqual(events["status"], "confirmed")
+
+    def test_a_natural_expiry_does_not_confirm_a_reset(self):
+        self.write_probe_log(
+            [self.clear(t=FUSION_NOW - 3500, classification="natural_expiry")]
+        )
+        (events,) = self.fuse([trusted_event("100", announced_at=FUSION_NOW - 3600)])
+        self.assertEqual(events["status"], "announced")
+
+    def test_a_retracted_clear_under_an_announcement_is_reverted(self):
+        clear = self.clear(t=FUSION_NOW - 3500)
+        self.write_probe_log(
+            [
+                clear,
+                {
+                    "kind": "retraction",
+                    "event_id": clear["event_id"],
+                    "detected_at": FUSION_NOW - 3000,
+                },
+            ]
+        )
+        (events,) = self.fuse([trusted_event("100", announced_at=FUSION_NOW - 3600)])
+        self.assertEqual(events["status"], "reverted_on_our_account")
+
+    def test_an_unverified_row_is_a_candidate_and_never_mails(self):
+        (events,) = self.fuse(
+            [trusted_event("100", announced_at=FUSION_NOW - 3600, text_verified=False)]
+        )
+        self.assertEqual(events["status"], "candidate")
+
+    def test_a_vendor_with_no_probe_still_fuses(self):
+        (events,) = self.fuse(
+            [trusted_event("200", announced_at=FUSION_NOW - 3600)], key="google"
+        )
+        self.assertEqual(events["status"], "announced")
+        self.assertEqual(events["incident_key"], "google:200")
+
+    def test_a_row_with_no_id_gets_a_status_but_no_key(self):
+        (events,) = self.fuse(
+            [trusted_event("", announced_at=FUSION_NOW - 3600)]
+        )
+        self.assertEqual(events["status"], "announced")
+        self.assertNotIn("incident_key", events)

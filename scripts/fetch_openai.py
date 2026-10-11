@@ -26,6 +26,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    # Run by cron as an absolute path, which puts scripts/ on sys.path rather
+    # than the repository root.
+    sys.path.insert(0, str(ROOT))
+
+from scripts import fetch_anthropic  # noqa: E402
+from scripts.incidents import announcer_from_url  # noqa: E402
+
 # ─── Upstream contract ───
 
 API_URL = "https://codex-resets.com/api/resets"
@@ -128,7 +137,17 @@ def normalise_event(raw_event: dict) -> dict:
         "url": raw_event["tweet_url"],
         "announced_at": raw_event["announced_at"],
         "kind": "reset",
+        # Until tweet-result answers for this id, the text is the tracker's
+        # paraphrase and the row is a CANDIDATE: the fusion layer stamps it
+        # `candidate`, and a candidate never mails. The tracker is a witness
+        # of posts, never the truth (docs/robustness-plan.md, "Signals").
+        "text_verified": False,
+        "text_source": "tracker",
+        "date_source": "tracker",
     }
+    announcer = announcer_from_url(raw_event["tweet_url"])
+    if announcer:
+        event["announcer"] = announcer
     # Upstream distinguishes how it learned of an event (webhook / backfill
     # / observed) and what kind of reset it was. Both were being dropped.
     # "observed" records are the unreliable ones: their announced_at is a
@@ -164,6 +183,64 @@ def to_common_schema(raw: dict, fetched_at: str) -> dict:
         "fetched_at": fetched_at,
         "events": events,
     }
+
+
+# ─── Verification: the tracker is a witness, never the truth ───
+
+
+def merge_first_seen(events: list, cached_events: list, now: str) -> list:
+    """Pin `first_seen_at` to when WE first saw the row, not when it was posted.
+
+    derive_status reads it for the historical cutoff: an old announcement newly
+    discovered is `historical` (shown, never mailed), while a row tracked live
+    keeps its standing. Rows already on disk when this field was introduced
+    take their announcement time — the same call fetch_anthropic.merge_events
+    makes, because they were followed live, not dug up late.
+    """
+    by_id = {}
+    for row in cached_events:
+        if isinstance(row, dict) and str(row.get("id") or ""):
+            by_id[str(row["id"])] = row
+    for event in events:
+        previous = by_id.get(str(event.get("id") or ""))
+        if previous is None:
+            event["first_seen_at"] = now
+            continue
+        first = previous.get("first_seen_at")
+        event["first_seen_at"] = (
+            first if isinstance(first, str) and first else previous.get("announced_at") or now
+        )
+    return events
+
+
+def verify_events(events: list, now: str) -> tuple[list, int]:
+    """Check pending numeric ids against tweet-result and fold in the answers.
+
+    Shared with the Anthropic fetcher: one cache (data/posts.json), one
+    three-calls-per-run budget, one apply function, so a post means the same
+    thing in both columns. Newest first, so the event a subscriber is about to
+    hear about never waits behind the backlog. Unverifiable rows stay
+    candidates — including upstream's `observed-*` rows, whose announced_at is
+    a hand-rounded estimate and whose URL has pointed at an unrelated reply.
+    """
+    posts = fetch_anthropic.load_posts()
+    posts, spent = fetch_anthropic.verify_ids(fetch_anthropic.pending_ids(events), posts, now)
+    by_id = {str(event.get("id")): event for event in events}
+    for post_id, record in posts.items():
+        event = by_id.get(str(post_id))
+        if event is not None and isinstance(record, dict) and record.get("verified"):
+            by_id[str(post_id)] = fetch_anthropic.apply_verification(event, record)
+    events = sorted(by_id.values(), key=lambda event: str(event.get("announced_at") or ""))
+    if spent:
+        try:
+            write_json(fetch_anthropic.POSTS_FILE, {"posts": posts, "updated_at": now})
+        except OSError as exc:
+            # The cache is an optimisation. Losing it costs re-verification on
+            # the next tick and nothing else, so it never fails the run.
+            print(f"could not write posts cache: {short_reason(exc)}")
+        # "checked", not "verified": a call that came back 404 is still a call.
+        print(f"checked {spent} post id(s) against cdn.syndication.twimg.com")
+    return events, spent
 
 
 # ─── Keep-last-good ───
@@ -256,9 +333,10 @@ def main(argv: Optional[list] = None) -> int:
         # the only trace is one echo into a cron log with MAILTO="".
         return soft_fail("fetcher did not complete")
 
+    now = utc_now()
     try:
         raw = fetch()
-        data = to_common_schema(raw, utc_now())
+        data = to_common_schema(raw, now)
     except SOFT_ERRORS as exc:
         return soft_fail(short_reason(exc))
 
@@ -283,6 +361,10 @@ def main(argv: Optional[list] = None) -> int:
     if lost > 0:
         # Accepted, but never silent: this is published history disappearing.
         print(f"upstream dropped {lost} event(s) since the last read; accepting")
+
+    data["events"] = merge_first_seen(data["events"], cached_events, now)
+    if "--no-verify" not in argv:
+        data["events"], _ = verify_events(data["events"], now)
 
     write_json(OUT_FILE, data)
     print(f"wrote {len(data['events'])} openai events -> {OUT_FILE}")

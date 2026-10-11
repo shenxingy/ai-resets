@@ -20,6 +20,7 @@ from scripts.groundtruth import (
     VERDICT_UNRESOLVED,
     clear_observations,
     credit_grant_since,
+    incident_observations,
     observation_near,
     PROBE_STALE_SECONDS,
     STATUS_ABSENT,
@@ -483,3 +484,72 @@ class BankedForecastTests(StateDirCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IncidentObservationStreamTests(StateDirCase):
+    """The fusion layer's read of the probe log: clears, grants, rescales,
+    and — flagged rather than dropped — clears we have since withdrawn."""
+
+    CLEAR = {
+        "event_id": "codex/10080:1788143216",
+        "kind": "clear",
+        "slot": "codex/10080",
+        "detected_at": 1788143216,
+        "used_before": 16.0,
+        "used_after": 0.0,
+        "classification": "global_candidate",
+        "confirmed": True,
+    }
+    RETRACTION = {
+        "kind": "retraction",
+        "event_id": "codex/10080:1788143216",
+        "detected_at": 1788153216,
+    }
+
+    def write_log(self, records, name="quota_events.jsonl"):
+        (self.state / name).write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+
+    def test_a_retracted_clear_is_dropped_by_default_and_flagged_on_request(self):
+        self.write_log([self.CLEAR, self.RETRACTION])
+        self.assertEqual(clear_observations(self.state), [])
+        rows = clear_observations(self.state, include_retracted=True)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["retracted"])
+        self.assertEqual(rows[0]["verdict"], VERDICT_UNRESOLVED)
+
+    def test_grants_and_rescales_join_the_stream_with_their_own_verdicts(self):
+        self.write_log(
+            [
+                self.CLEAR,
+                {"kind": "credit_granted", "t": 1788144000, "slot": "codex/10080"},
+                {
+                    "kind": "limit_change",
+                    "slot": "codex/10080",
+                    "clear_bracket_hi": 1788145000,
+                },
+            ]
+        )
+        rows = incident_observations(self.state)
+        by_verdict = {row["verdict"]: row["t"] for row in rows}
+        self.assertEqual(
+            by_verdict,
+            {
+                VERDICT_UNRESOLVED: 1788143216,
+                "credit_granted": 1788144000,
+                "limit_change": 1788145000,
+            },
+        )
+        self.assertFalse(any(row.get("retracted") for row in rows))
+
+    def test_a_vendor_with_no_probe_has_no_observations(self):
+        self.write_log([self.CLEAR])
+        self.assertEqual(incident_observations(self.state, vendor="google"), [])
+
+    def test_a_disagreeing_claude_clear_stays_withheld_even_for_fusion(self):
+        disagreeing = dict(self.CLEAR, concordance="accounts_disagree")
+        self.write_log([disagreeing], name="claude_events.jsonl")
+        rows = incident_observations(self.state, vendor="anthropic")
+        self.assertEqual(rows, [])
