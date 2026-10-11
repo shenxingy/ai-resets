@@ -336,6 +336,32 @@ class SingleAccountFlowTests(FlowCase):
         self.assertIn("No banked credit was spent and the account did not change.", body)
         self.assertEqual({claim for *_, claim in self.deliveries()}, {"settled"})
 
+    def test_c_a_clear_after_the_post_sends_the_one_promised_confirmation(self):
+        # The post first, then our account 30 min later: the first mail could
+        # not say it was seen, so it owed one follow-up, and the clear pays it.
+        self.posts["openai"] = [trusted_post(
+            "2109132167112782291", T0 - 1800, vendor="openai",
+            text="Reset all propagated.", announcer="thsottiaux",
+        )]
+        self.export("openai", [])
+        self.build(T0 - 1700)
+        self.notify(T0 - 1700)
+        self.assertEqual(len(self.mails()), 2)
+        self.assertEqual({claim for *_, claim in self.deliveries()}, {"pending"})
+
+        self.export("openai", self.codex_polls())
+        data = self.build(T0 + 700)
+        self.assertEqual(data["vendors"]["openai"]["events"][0]["status"], "confirmed")
+        self.notify(T0 + 700)
+        self.notify(T0 + 1000)
+        follow_ups = self.mails()[2:]
+        self.assertEqual(len(follow_ups), 2)
+        self.assertEqual(follow_ups[0]["subject"], "Codex: the announced reset landed")
+        self.assertIn("Seen on our Codex account a at", follow_ups[0]["text_body"])
+        self.assertIn("after this post", follow_ups[0]["text_body"])
+        self.assertEqual(sorted(stage for _, _, stage, _ in self.deliveries()),
+                         ["confirmed", "confirmed", "new", "new"])
+
     def test_c_a_post_from_a_curated_tracker_is_not_confirmed_by_one_account(self):
         self.export("openai", self.codex_polls())
         post = trusted_post("1", T0 + 180, vendor="openai", text="Reset all propagated.",
