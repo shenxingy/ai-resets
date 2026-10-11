@@ -18,6 +18,11 @@ Environment=AI_RESETS_STATE=/var/lib/ai-resets
 # ~/.local/bin regardless. Address the real binary directly; the `current`
 # component is the package symlink, so upgrades are followed automatically.
 Environment=AI_RESETS_CODEX_BIN=__CODEX_BIN__
+# The spawned codex never inherits a login shell, so without this line its
+# home is ~/.codex no matter what the installer resolved — and ReadWritePaths
+# below would punch through a directory the process never uses while the one
+# it does write stays read-only. Binary, home, and writable path must agree.
+Environment=CODEX_HOME=__CODEX_HOME__
 ExecStart=/usr/bin/python3 __AI_RESETS_REPO__/scripts/quota_probe.py
 Restart=always
 RestartSec=10

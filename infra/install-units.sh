@@ -42,7 +42,13 @@ die() { printf 'install-units: %s\n' "$1" >&2; exit 1; }
 USER_HOME="$(getent passwd "$AI_RESETS_USER" | cut -d: -f6)"
 [ -n "$USER_HOME" ] || die "cannot resolve the home directory of $AI_RESETS_USER"
 
-: "${CODEX_HOME:=$USER_HOME/.codex}"
+# The probe's Codex home, not the operator's interactive one. A login shell
+# that exports CODEX_HOME (e.g. a profile-based setup under ~/.codex-profiles)
+# must not redirect the probe: the unit would point ReadWritePaths at a home
+# the spawned codex never uses while its real one stays read-only. Override
+# with AI_RESETS_CODEX_HOME if the probe's account ever moves.
+: "${AI_RESETS_CODEX_HOME:=$USER_HOME/.codex}"
+CODEX_HOME="$AI_RESETS_CODEX_HOME"
 # `codex` on PATH is often a wrapper, and systemd's PATH excludes ~/.local/bin
 # in any case, so prefer the real binary the standalone package installs. The
 # `current` component is a symlink the package updates, so upgrades follow.

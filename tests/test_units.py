@@ -20,6 +20,7 @@ The check runs only on a host that actually has these units, so it is a no-op
 in a clone and a real gate on the machine that serves the site.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -149,6 +150,35 @@ class UnitContentTests(unittest.TestCase):
                 self.assertIn(
                     "-/etc/ai-resets/service.env", found.get("EnvironmentFile", []),
                 )
+
+
+class InstallerResolutionTests(unittest.TestCase):
+    """The installer's host-value resolution, checked without installing."""
+
+    def resolve(self, env_extra: dict) -> str:
+        result = subprocess.run(
+            ["bash", str(INSTALLER), "--show"],
+            capture_output=True, text=True, timeout=120, cwd=REPO,
+            env={**os.environ, **env_extra},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_a_leaked_interactive_codex_home_does_not_move_the_probe(self):
+        # The owner exports CODEX_HOME for their own profile-based Codex.
+        # Under `sudo -E` that export reaches this installer, and the probe
+        # unit would render paths for a home the spawned codex never reads
+        # while its real one stays read-only behind ProtectHome.
+        out = self.resolve({"CODEX_HOME": "/home/bogus/interactive"})
+        line = next(l for l in out.splitlines() if l.strip().startswith("CODEX_HOME"))
+        self.assertNotIn("bogus", line)
+
+    def test_the_probe_codex_home_has_its_own_override(self):
+        out = self.resolve(
+            {"CODEX_HOME": "/home/bogus/interactive", "AI_RESETS_CODEX_HOME": "/home/bogus/probe"}
+        )
+        line = next(l for l in out.splitlines() if l.strip().startswith("CODEX_HOME"))
+        self.assertIn("/home/bogus/probe", line)
 
 
 class InstalledUnitDriftTests(unittest.TestCase):
