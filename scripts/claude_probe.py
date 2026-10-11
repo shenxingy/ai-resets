@@ -76,10 +76,14 @@ What differs from Codex, all measured on this host on 2026-09-05/06:
    `/rate-limit-options` or `/limit-reset` within the hour before it is the
    owner's own reset (2026-09-30, account b, 30 minutes before).
 
-An early weekly clear stays private however it is attributed. Two accounts
-agreeing does not exclude personal reset use on both, and a personal limit
-reset redeemed on claude.ai leaves nothing this probe can read. Official
-reset documentation:
+An early weekly clear on one account stays private however it is
+attributed: a personal limit reset redeemed on claude.ai leaves nothing this
+probe can read. Concordance alone does not change that, since it compares
+clears whose cause was never checked. The one exception is the contract's
+two-account rule, decided in scripts/attribution.py over the whole log: two
+`unattributed` clears on different accounts within the hour, and not both at
+their limit, are the vendor's reset and are published. Official reset
+documentation:
 https://support.claude.com/en/articles/17007452-what-is-a-limit-reset
 """
 from __future__ import annotations
@@ -104,6 +108,7 @@ if str(ROOT) not in sys.path:
     # rather than the repository root.
     sys.path.insert(0, str(ROOT))
 
+from scripts import attribution  # noqa: E402
 from scripts import quota_probe as qp  # noqa: E402
 from scripts.timefmt import format_epoch_pacific  # noqa: E402
 
@@ -1031,6 +1036,8 @@ def verdict_of(event: dict[str, Any]) -> str | None:
     classification = event.get("classification")
     if not isinstance(classification, str):
         return None
+    if attribution.is_vendor_reset(event):
+        return qp.VERDICT_VENDOR_RESET
     return qp.VERDICT_OF_CLASS.get(classification)
 
 
@@ -1150,6 +1157,23 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         # this: measured from the later end, which is the conservative one.
         gap = f"at least {hours} hours {gap}"
 
+    if verdict == qp.VERDICT_VENDOR_RESET:
+        # Only scripts/attribution.py produces this verdict. The concordance
+        # clause is left out on purpose: the first clear of a pair is written
+        # while the other account has not cleared yet, so it can read
+        # `disagree` about the very reset the witness below confirms.
+        return (
+            f"{subject} cleared {early} early, and so did our other account's.",
+            f"{change} {moment}, {gap}; {qp.checked_clause(event)}, and the profile's "
+            "history shows no Claude Code reset menu in the hour before. "
+            + qp.witness_clause(
+                event,
+                f"{PRODUCT} model-scoped weekly"
+                if event.get("limit_kind") == "weekly_scoped"
+                else f"{PRODUCT} weekly",
+            ),
+        )
+
     if verdict == qp.VERDICT_UNATTRIBUTED:
         return (
             f"{subject} cleared {early} early, with no cause on our side that this "
@@ -1195,16 +1219,20 @@ def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     2. Only a WEEKLY window. `session_only` is not in the allowlist, and the
        window length is checked again here so that a future record whose
        classification was written before the gate existed still cannot pass.
-    3. Only a classification in the allowlist, with an event id to check
-       against the retraction log.
-    Only scheduled weekly clears are currently allowed. Early clears stay
-    private even if both accounts agree: neither exposes a redemption ledger.
+    3. Only a classification in the allowlist, or an `unattributed` clear
+       that scripts/attribution.py paired with the other account's, with an
+       event id to check against the retraction log.
+    Every other early clear stays private, concordance or not: neither
+    account exposes a redemption ledger.
     """
     if event.get("kind") != qp.EVENT_CLEAR or not event.get("confirmed"):
         return False
     if qp.window_minutes_of(event) != WEEKLY_MINUTES:
         return False
-    if event.get("classification") not in PUBLIC_CLASSIFICATIONS:
+    if (
+        event.get("classification") not in PUBLIC_CLASSIFICATIONS
+        and not attribution.is_vendor_reset(event)
+    ):
         return False
     if not event.get("event_id") or event.get("event_id") in retracted_ids:
         return False
@@ -1398,7 +1426,10 @@ def export_observations(path: Path, now: int | None = None) -> int:
     data/anthropic.json seed, which build.py would clobber.
     """
     now = int(time.time()) if now is None else now
-    events = qp.read_events(EVENTS_FILE)
+    # The two-account rule runs over the whole log, before any record is
+    # turned into a row: whether a clear is the vendor's depends on the other
+    # account's records, never on its own.
+    events = attribution.attribute(qp.read_events(EVENTS_FILE))
     retracted = {
         event["event_id"]
         for event in events
