@@ -119,6 +119,44 @@ class ClassifyTextTests(unittest.TestCase):
         self.assertEqual(classify_text(MIXED_TENSE), STAGE_RETROSPECTIVE)
         self.assertEqual(classify_text(MIXED_TENSE_2), STAGE_RETROSPECTIVE)
 
+    def test_the_staffs_rollout_phrasing_is_a_reset_that_happened(self):
+        # Exact strings from data/openai.json. Each one is also the second
+        # witness a probe-first clear can use, so the stage alone is not
+        # enough: the pattern itself has to see a completed reset.
+        for text in (
+            "Reset all propagated.",
+            "Resets all propagated. That will be all.",
+            "Put the reset in the bag. All propagated.",
+            "the reset has been processed",
+            "Reset all propagated. Sweet dreams.",
+            # Each half of the 10-11 post must stand on its own.
+            "Put the reset in the bag.",
+            "All propagated.",
+            "Good Sunday. Reset has been propagated to accounts and we landed some "
+            "fixes to usage for things mentioned yesterday as issues we found. More "
+            "to come tomorrow and will keep communicating.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(classify_text(text), STAGE_RETROSPECTIVE)
+                self.assertTrue(is_explicit_reset_witness(announcement(text=text)))
+
+    def test_the_will_in_that_will_be_all_does_not_make_it_a_forecast(self):
+        # 2026-09-26 was forecast_lapsed for two weeks on exactly this "will".
+        self.assertEqual(
+            classify_text("Resets all propagated. That will be all. Have a fantastic weekend."),
+            STAGE_RETROSPECTIVE,
+        )
+
+    def test_a_rollout_still_to_come_stays_a_forecast(self):
+        for text in (
+            "The reset will be propagated over the next hour.",
+            "It will be all propagated within the hour.",
+            "Resets will be propagated shortly.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(classify_text(text), STAGE_FORECAST)
+                self.assertFalse(is_explicit_reset_witness(announcement(text=text)))
+
     def test_a_post_with_no_tense_marker_is_treated_as_already_done(self):
         # The feed already decided this is a reset; with no future language the
         # safe reading is that it has happened, not that it is pending.

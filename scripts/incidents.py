@@ -74,11 +74,24 @@ def vendor_label(vendor: str) -> str:
 # "We have reset", "we've reset", "we are reseting" (their spelling), "we have
 # now reset", "we just reset". The optional adverb slot is deliberately narrow:
 # widening it to "any word" would swallow "we will do the full banked reset".
+#
+# The staff account that announces most Codex resets stopped writing "we have
+# reset" in August and now writes the done-ness of the ROLLOUT instead. Four
+# real posts the old pattern read as no tense at all, or as a forecast because
+# a later sentence carried "will": "Reset has been propagated to accounts ...
+# will keep communicating" (2026-08-24), "Reset all propagated." (09-12,
+# 10-02), "Resets all propagated. That will be all." (09-26, which sat as
+# forecast_lapsed) and "Put the reset in the bag. All propagated." (10-11).
+# "All propagated" is only read at the start of a sentence, so "it will be all
+# propagated within the hour" stays a forecast.
 RETROSPECTIVE_RE = re.compile(
     r"\bwe(?:'ve|’ve|\s+have|\s+are|\s+just)?\s+(?:now\s+|just\s+|also\s+)*"
     r"reset(?:ting|ing|ed)?\b"
     r"|\b(?:have|has|had|were|was)\s+(?:now\s+|just\s+)?(?:been\s+)?reset\b"
-    r"|\breset\s+(?:has|have)\s+landed\b",
+    r"|\bresets?\s+(?:has|have)\s+(?:now\s+|just\s+)?(?:been\s+)?(?:landed|processed)\b"
+    r"|\bresets?\s+(?:has\s+|have\s+)?(?:all\s+)?(?:been\s+)?propagated\b"
+    r"|(?:^|[.!?]\s+)all\s+propagated\b"
+    r"|\bresets?\s+in\s+the\s+bag\b",
     re.IGNORECASE,
 )
 
