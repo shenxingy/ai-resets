@@ -36,6 +36,7 @@ from scripts.subscriptions import (
     SubscriptionApp,
     event_origin,
     flatten_events,
+    health_conditions,
     incident_key,
     mail_stage,
     make_handler,
@@ -880,11 +881,12 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertFalse(store.migrate_deliveries_held())
 
 
-class ClaudeProbeAlertTests(unittest.TestCase):
-    """The Claude probe carries one health block per account, and each block
-    can page the owner. The token case gets 30 minutes of grace: an OAuth
-    expiry heals itself the next time that profile is used, and the plan's
-    threshold exists so a transient expiry never pages anyone."""
+class AccountProbeAlertTests(unittest.TestCase):
+    """Every per-account health block can page the owner: the Claude probe's
+    two, and the Codex probe's second account, `codex:b`. The token case gets
+    30 minutes of grace: an OAuth expiry heals itself the next time that
+    profile is used, and the plan's threshold exists so a transient expiry
+    never pages anyone."""
 
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
@@ -991,6 +993,71 @@ class ClaudeProbeAlertTests(unittest.TestCase):
         self.notify()
         subjects = [m["subject"] for m in self.owner_mails()]
         self.assertTrue(any("probe:claude:a:blind" in s for s in subjects), subjects)
+
+    # ─── The second Codex account ────────────────────────────────────────────
+
+    STALE_B = {"label": "codex:b", "updated_at": NOW - 3600, "last_ok_at": NOW - 3600,
+               "consecutive_failures": 40}
+
+    def conditions(self):
+        health = json.loads((self.state / "probe_health.json").read_text())
+        data = json.loads(self.config.data_file.read_text())
+        return health_conditions(self.config, health, data, NOW)
+
+    def test_a_healthy_second_codex_account_alerts_nobody(self):
+        self.write_health(**{"codex:b": {"label": "codex:b"}})
+        self.notify()
+        self.assertEqual(self.owner_mails(), [])
+
+    def test_no_second_codex_account_is_not_an_outage(self):
+        # The probe drops `codex:b` when no second home is configured.
+        self.write_health()
+        self.assertEqual(self.conditions(), {})
+
+    def test_a_stale_second_codex_account_pages_once_and_recovers_once(self):
+        self.write_health(**{"codex:b": self.STALE_B})
+        self.notify()
+        alerts = self.owner_mails()
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("probe:codex:b:blind", alerts[0]["subject"])
+
+        self.notify()
+        self.assertEqual(len(self.owner_mails()), 1)
+
+        self.write_health(**{"codex:b": {"label": "codex:b"}})
+        self.notify()
+        alerts = self.owner_mails()
+        self.assertEqual(len(alerts), 2)
+        self.assertIn("recovered: probe:codex:b:blind", alerts[1]["subject"])
+
+    def test_a_failing_second_codex_account_pages_while_its_block_is_fresh(self):
+        # The probe keeps writing b's block every round while b fails, so the
+        # block is fresh and the outage shows as a recorded blind spell.
+        self.write_health(**{"codex:b": {"label": "codex:b", "blind_since": NOW - 900,
+                                          "consecutive_failures": 15, "last_ok_at": NOW - 960}})
+        conditions = self.conditions()
+        self.assertEqual(sorted(conditions), ["probe:codex:b:blind"])
+        self.assertIn("The Codex probe has not read account b", conditions["probe:codex:b:blind"])
+        self.assertIn("15 consecutive failures", conditions["probe:codex:b:blind"])
+
+    def test_each_codex_account_s_outage_has_its_own_key(self):
+        # Account a's block is untouched by b's outage, and b's by a's.
+        self.write_health(**{"codex:b": self.STALE_B})
+        self.assertNotIn("probe:codex:blind", self.conditions())
+        health = json.loads((self.state / "probe_health.json").read_text())
+        health["codex"].update(blind_since=NOW - 3600, consecutive_failures=35)
+        health["codex:b"] = {**health["codex:b"], "updated_at": NOW - 30, "last_ok_at": NOW - 30,
+                             "consecutive_failures": 0}
+        (self.state / "probe_health.json").write_text(json.dumps(health))
+        self.assertEqual(sorted(self.conditions()), ["probe:codex:blind"])
+
+    def test_the_dry_run_names_the_second_codex_account_s_alert(self):
+        self.write_health(**{"codex:b": self.STALE_B})
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            run_notifier(self.config, self.app, dry_run=True, now=NOW)
+        self.assertIn("probe:codex:b:blind", buffer.getvalue())
+        self.assertEqual(self.owner_mails(), [])
 
 
 class IncidentKeyTests(unittest.TestCase):
