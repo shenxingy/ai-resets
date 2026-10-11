@@ -97,6 +97,15 @@ CURSOR_FILE = STATE_DIR / "quota_cursor.json"
 # "the probe is blind" and alerts the owner.
 HEALTH_FILE = STATE_DIR / "probe_health.json"
 PROBE_LABEL = "codex"
+# The account label written on every row: `a` and `b` are the only names an
+# account is ever given (docs/reset-attribution.md). This probe reads the one
+# Codex home its unit points at, which is account `a`.
+ACCOUNT_LABEL = "a"
+
+# An account or credit id is recorded as the first 12 hex digits of a
+# namespaced sha256 and never as itself: enough to tell two accounts apart,
+# nothing a reader of a row, a log line or an export could use.
+FINGERPRINT_HEX = 12
 
 POLL_SECONDS = int(os.environ.get("AI_RESETS_POLL_SECONDS", "60"))
 APP_SERVER_TIMEOUT = float(os.environ.get("AI_RESETS_RPC_TIMEOUT", "25"))
@@ -315,14 +324,75 @@ def credits_available(result: dict[str, Any]) -> int | None:
     return count if isinstance(count, int) else None
 
 
+def fingerprint(namespace: str, raw: Any) -> str | None:
+    """`sha256("ai-resets/<namespace>:" + raw)`, cut to 12 hex digits, or None.
+
+    The raw value is an account, organisation or credit id, and it is hashed
+    at the one place it enters this process, so no row, cursor, log line or
+    export can carry it. The namespace keeps an account id and a credit id
+    that happened to be equal from hashing alike. An absent or empty id is
+    None — "unread" — never an identity of its own.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    digest = hashlib.sha256(f"ai-resets/{namespace}:{raw}".encode("utf-8"))
+    return digest.hexdigest()[:FINGERPRINT_HEX]
+
+
+def account_fingerprint(raw: Any) -> str | None:
+    """The account fingerprint every probe writes as `account_fp`."""
+    return fingerprint("account", raw)
+
+
+def credit_details(result: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """The AVAILABLE banked credits by fingerprint, or None when not itemised.
+
+    availableCount is a balance: a grant and a redemption between two polls
+    cancel in it, and an expiry looks exactly like a spend. The detail rows
+    tell those apart — a redeemed credit's id leaves the list before its
+    expiry, an expired one leaves at it. The read already returns them
+    (`credits` was present on the 2026-10-11 read, empty at a count of 0); the
+    probe used to drop them. The schema says `null` means only the count is
+    known and `[]` means "itemised, and empty", so those stay distinct here.
+
+    One available row whose id cannot be read makes the whole list None: an
+    itemisation with a hole in it would let that credit leave unseen.
+    """
+    bank = result.get("rateLimitResetCredits")
+    if not isinstance(bank, dict) or not isinstance(bank.get("credits"), list):
+        return None
+    details: list[dict[str, Any]] = []
+    for credit in bank["credits"]:
+        if not isinstance(credit, dict) or credit.get("status") != "available":
+            continue
+        credit_id = fingerprint("credit", credit.get("id"))
+        if credit_id is None:
+            return None
+        expires_at = credit.get("expiresAt")
+        if isinstance(expires_at, bool) or not isinstance(expires_at, int):
+            # The schema's own spelling of "does not expire" is null.
+            expires_at = None
+        details.append({"id": credit_id, "expires_at": expires_at})
+    # Sorted so that two readings of the same bank compare equal.
+    return sorted(details, key=lambda credit: credit["id"])
+
+
 def normalise(result: dict[str, Any], now: int) -> list[dict[str, Any]]:
-    """Flatten the RPC result into one row per (limit_id, window) slot."""
+    """Flatten the RPC result into one row per (limit_id, window) slot.
+
+    Every row also says WHOSE quota it is and what was in the bank, because a
+    clear is only attributable when both are known on each side of it: the
+    2026-09-19 and 09-20 clears were account switches (plan pro -> prolite and
+    back), and the 2026-10-04 one was a banked credit spent a poll earlier.
+    """
     by_id = result.get("rateLimitsByLimitId")
     if not isinstance(by_id, dict):
         single = result.get("rateLimits")
         by_id = {single.get("limitId", "codex"): single} if isinstance(single, dict) else {}
 
     bank = credits_available(result)
+    account_fp = account_fingerprint(result.get("accountId"))
+    credit_ids = credit_details(result)
     rows: list[dict[str, Any]] = []
     for limit_id, limit in sorted(by_id.items()):
         if not isinstance(limit, dict):
@@ -345,6 +415,9 @@ def normalise(result: dict[str, Any], now: int) -> list[dict[str, Any]]:
                     "resets_at": window.get("resetsAt"),
                     "plan_type": limit.get("planType"),
                     "credits_available": bank,
+                    "account": ACCOUNT_LABEL,
+                    "account_fp": account_fp,
+                    "credit_ids": None if credit_ids is None else list(credit_ids),
                 }
             )
     return rows
@@ -443,6 +516,37 @@ def resolve_credits(
 
 def same_anchor(a: int | None, b: int | None) -> bool:
     return a is not None and b is not None and abs(a - b) <= ANCHOR_JITTER_SECONDS
+
+
+# The two fields that say WHOSE quota a row is. A row that cannot read one
+# leaves the remembered value alone: an unread identity is not a new one.
+IDENTITY_FIELDS = ("account_fp", "plan_type")
+
+
+def remember_identity(state: dict[str, Any], row: dict[str, Any]) -> None:
+    """Keep the last non-null account fingerprint and plan this slot read."""
+    known = state.get("identity")
+    known = dict(known) if isinstance(known, dict) else {}
+    for field in IDENTITY_FIELDS:
+        value = row.get(field)
+        if isinstance(value, str) and value:
+            known[field] = value
+    state["identity"] = known
+
+
+def last_known(state: dict[str, Any], field: str) -> str | None:
+    """The last non-null `account_fp` / `plan_type` this slot has read.
+
+    Falls back to the previous row for a cursor written before the identity
+    was remembered, so the first poll after an upgrade still compares
+    against the plan the probe last saw rather than against nothing.
+    """
+    known = state.get("identity")
+    value = known.get(field) if isinstance(known, dict) else None
+    if not value:
+        last = state.get("last")
+        value = last.get(field) if isinstance(last, dict) else None
+    return value if isinstance(value, str) and value else None
 
 
 def is_revert(pending: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -666,6 +770,7 @@ class Detector:
             state["active_anchor"] = row["resets_at"]
 
         events.extend(self._track_credits(state, key, row))
+        remember_identity(state, row)
         state["last"] = row
         return events
 
@@ -732,6 +837,10 @@ class Detector:
         state: dict[str, Any], key: str, row: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Follow the banked-credit count across the field's None flaps."""
+        if isinstance(row.get("credit_ids"), list):
+            # The itemised bank, held across reads that do not itemise it, so
+            # a flap to null is not logged as a change (see changed_rows).
+            state["credit_ids_known"] = row["credit_ids"]
         credit = row.get("credits_available")
         if not isinstance(credit, int):
             state["credits_absent"] = state.get("credits_absent", 0) + 1
@@ -804,10 +913,19 @@ def changed_rows(
             previous.get("credits_available"), known, previous["t"]
         )
         credits_now, _ = resolve_credits(row.get("credits_available"), known, row["t"])
+        # Whose account this is, and which credits sit in its bank, move
+        # rarely and matter most: the sample log is what a clear is attributed
+        # from after the fact. Both are compared against the last value READ,
+        # for the reason the count is: a field that blinks out is "unknown,
+        # unchanged", not a move to log twice per flap.
+        account_fp = row.get("account_fp")
+        credit_ids = row.get("credit_ids")
         moved = (
             previous["used_percent"] != row["used_percent"]
             or credits_before != credits_now
             or previous.get("plan_type") != row.get("plan_type")
+            or (account_fp is not None and account_fp != last_known(state, "account_fp"))
+            or (credit_ids is not None and credit_ids != state.get("credit_ids_known"))
         )
         anchor_moved = (
             row["used_percent"] > CLEAR_FLOOR

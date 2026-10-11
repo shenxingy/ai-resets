@@ -5,6 +5,7 @@ history rather than invented ones — see the module docstring of
 scripts/quota_probe.py for the measurements behind each.
 """
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -51,7 +52,8 @@ STATE_FILES = {
 }
 
 
-def sample(t, used, resets_at=None, credits=1, limit_id="codex", window=WEEK):
+def sample(t, used, resets_at=None, credits=1, limit_id="codex", window=WEEK, **extra):
+    """One normalised row. `extra` adds or overrides fields (identity, ids)."""
     return {
         "t": t,
         "limit_id": limit_id,
@@ -61,7 +63,13 @@ def sample(t, used, resets_at=None, credits=1, limit_id="codex", window=WEEK):
         "resets_at": resets_at,
         "plan_type": "pro",
         "credits_available": credits,
+        **extra,
     }
+
+
+def fp(namespace, raw):
+    """The fingerprint the contract defines, computed independently of qp."""
+    return hashlib.sha256(f"ai-resets/{namespace}:{raw}".encode()).hexdigest()[:12]
 
 
 @contextlib.contextmanager
@@ -138,6 +146,103 @@ class NormaliseTest(unittest.TestCase):
 
     def test_empty_result_yields_no_rows(self):
         self.assertEqual(qp.normalise({}, now=1000), [])
+
+
+# The same read with the two fields the probe used to drop: the top-level
+# accountId and the itemised bank. Ids here are placeholders; the shape is the
+# app-server schema's (codex-cli 0.162.1, GetAccountRateLimitsResponse).
+IDENTIFIED_RESULT = {
+    **RPC_RESULT,
+    "accountId": "account-raw-id-0001",
+    "rateLimitResetCredits": {
+        "availableCount": 2,
+        "credits": [
+            {"id": "credit-raw-id-b", "status": "available", "grantedAt": 1,
+             "expiresAt": 2_000_000_000, "resetType": "codexRateLimits"},
+            {"id": "credit-raw-id-a", "status": "available", "grantedAt": 1,
+             "expiresAt": None, "resetType": "codexRateLimits"},
+            {"id": "credit-raw-id-c", "status": "redeemed", "grantedAt": 1,
+             "expiresAt": None, "resetType": "codexRateLimits"},
+        ],
+    },
+}
+
+
+class IdentitySignalTest(unittest.TestCase):
+    """docs/reset-attribution.md, "Signals each probe records"."""
+
+    def test_every_row_names_its_account_by_fingerprint_only(self):
+        rows = qp.normalise(IDENTIFIED_RESULT, now=1000)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["account"], "a")
+            self.assertEqual(row["account_fp"], fp("account", "account-raw-id-0001"))
+        # Not anywhere, in any field: the raw ids never enter a row.
+        written = json.dumps(rows)
+        for raw in ("account-raw-id-0001", "credit-raw-id-a", "credit-raw-id-b"):
+            self.assertNotIn(raw, written)
+
+    def test_an_absent_account_id_is_unread_rather_than_an_identity(self):
+        for value in ("absent", None, "", 7):
+            with self.subTest(account_id=value):
+                result = dict(IDENTIFIED_RESULT)
+                if value == "absent":
+                    del result["accountId"]
+                else:
+                    result["accountId"] = value
+                for row in qp.normalise(result, now=1000):
+                    self.assertIsNone(row["account_fp"])
+
+    def test_only_available_credits_are_itemised_by_fingerprint(self):
+        row = qp.normalise(IDENTIFIED_RESULT, now=1000)[0]
+        expected = sorted(
+            [
+                {"id": fp("credit", "credit-raw-id-a"), "expires_at": None},
+                {"id": fp("credit", "credit-raw-id-b"), "expires_at": 2_000_000_000},
+            ],
+            key=lambda credit: credit["id"],
+        )
+        self.assertEqual(row["credit_ids"], expected)
+
+    def test_the_read_asks_for_the_itemised_bank(self):
+        # account/rateLimits/read takes excludeResetCreditDetails; passing it
+        # true is how the detail rows would silently disappear.
+        self.assertNotIn("excludeResetCreditDetails", json.dumps(qp._rpc_messages()))
+
+    def test_the_namespace_keeps_an_account_and_a_credit_apart(self):
+        self.assertNotEqual(qp.fingerprint("account", "x"), qp.fingerprint("credit", "x"))
+
+    def test_an_unitemised_bank_is_none_and_an_empty_one_is_empty(self):
+        # The schema: null means only availableCount is known, [] means the
+        # details were fetched and nothing was available. Merging the two
+        # would let "not itemised" read as "every credit left".
+        bank = {"availableCount": 0}
+        self.assertIsNone(qp.credit_details({"rateLimitResetCredits": bank}))
+        self.assertIsNone(
+            qp.credit_details({"rateLimitResetCredits": {**bank, "credits": None}})
+        )
+        self.assertEqual(qp.credit_details({"rateLimitResetCredits": {**bank, "credits": []}}), [])
+        self.assertIsNone(qp.credit_details({}))
+        self.assertIsNone(qp.credit_details({"rateLimitResetCredits": None}))
+
+    def test_an_available_credit_without_an_id_unitemises_the_bank(self):
+        result = {"rateLimitResetCredits": {"availableCount": 1, "credits": [
+            {"status": "available", "grantedAt": 1},
+        ]}}
+        self.assertIsNone(qp.credit_details(result))
+
+    def test_an_expiry_that_is_not_an_integer_is_read_as_none(self):
+        for expiry in ("2026-10-11", True, 1.5):
+            with self.subTest(expiry=expiry):
+                result = {"rateLimitResetCredits": {"availableCount": 1, "credits": [
+                    {"id": "c", "status": "available", "expiresAt": expiry},
+                ]}}
+                self.assertEqual(qp.credit_details(result)[0]["expires_at"], None)
+
+    def test_each_row_carries_its_own_copy_of_the_itemisation(self):
+        rows = qp.normalise(IDENTIFIED_RESULT, now=1000)
+        rows[0]["credit_ids"].clear()
+        self.assertEqual(len(rows[1]["credit_ids"]), 2)
 
 
 # ─── Clear recognition ───────────────────────────────────────────────────────
@@ -446,6 +551,55 @@ class ChangedRowsTest(unittest.TestCase):
         d.observe(sample(0, 14, 1_000, credits=1))
         d.observe(sample(60, 14, 1_000, credits=None))
         self.assertEqual(len(qp.changed_rows([sample(120, 14, 1_000, credits=0)], d)), 1)
+
+    def test_an_account_switch_is_logged_even_with_nothing_else_moving(self):
+        d = qp.Detector()
+        d.observe(sample(0, 14, 1_000, account_fp="aaaaaaaaaaaa"))
+        moved = qp.changed_rows([sample(60, 14, 1_000, account_fp="bbbbbbbbbbbb")], d)
+        self.assertEqual(len(moved), 1)
+
+    def test_an_unreadable_identity_is_not_a_change(self):
+        # Same rule as the credit field: "unread" is not a new account, and a
+        # flap must not write a row on each side of it.
+        d = qp.Detector()
+        d.observe(sample(0, 14, 1_000, account_fp="aaaaaaaaaaaa"))
+        self.assertEqual(qp.changed_rows([sample(60, 14, 1_000, account_fp=None)], d), [])
+        d.observe(sample(60, 14, 1_000, account_fp=None))
+        self.assertEqual(
+            qp.changed_rows([sample(120, 14, 1_000, account_fp="aaaaaaaaaaaa")], d), []
+        )
+        # ...while a different account seen across the flap still is one.
+        self.assertEqual(
+            len(qp.changed_rows([sample(120, 14, 1_000, account_fp="bbbbbbbbbbbb")], d)), 1
+        )
+
+    def test_the_first_fingerprinted_row_after_an_upgrade_is_logged(self):
+        # A cursor written before account_fp existed: the first row that has
+        # one is the first identity the log will ever hold.
+        d = qp.Detector()
+        d.observe(sample(0, 14, 1_000))
+        self.assertEqual(
+            len(qp.changed_rows([sample(60, 14, 1_000, account_fp="aaaaaaaaaaaa")], d)), 1
+        )
+
+    def test_a_credit_swap_the_count_cannot_see_is_logged(self):
+        # A grant and a redemption between two polls cancel in the count.
+        d = qp.Detector()
+        d.observe(sample(0, 14, 1_000, credits=1, credit_ids=[{"id": "c1", "expires_at": None}]))
+        moved = qp.changed_rows(
+            [sample(60, 14, 1_000, credits=1, credit_ids=[{"id": "c2", "expires_at": None}])], d
+        )
+        self.assertEqual(len(moved), 1)
+
+    def test_itemisation_blinking_out_is_not_a_change(self):
+        d = qp.Detector()
+        ids = [{"id": "c1", "expires_at": None}]
+        d.observe(sample(0, 14, 1_000, credits=1, credit_ids=ids))
+        self.assertEqual(qp.changed_rows([sample(60, 14, 1_000, credits=1, credit_ids=None)], d), [])
+        d.observe(sample(60, 14, 1_000, credits=1, credit_ids=None))
+        self.assertEqual(
+            qp.changed_rows([sample(120, 14, 1_000, credits=1, credit_ids=list(ids))], d), []
+        )
 
     def test_the_field_going_absent_for_good_is_logged_once_it_is_stale(self):
         # Past the carry window we stop claiming to know the count; that
