@@ -286,9 +286,10 @@ def observation_time(value):
 def observation_note(probe, total, shown):
     """The population sentence, taken from the probe's own coverage line.
 
-    Never hardcoded here: "one Codex Pro account, weekly window only" is true
-    of today's probe and would silently become a lie the day a second probe
-    lands. The exporter writes the sentence; this only frames it.
+    Never hardcoded here: "one Codex Pro account, weekly window only" was
+    true of the Codex probe until it read a second account, and a sentence
+    typed here would have gone on saying it. The exporter writes the
+    sentence; this only frames it.
     """
     parts = []
     if total > shown:
