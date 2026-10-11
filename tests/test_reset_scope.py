@@ -1,11 +1,17 @@
-"""Account clears must not cross the public vendor-evidence boundary."""
+"""Account clears must not cross the public vendor-evidence boundary.
+
+Since 2026-10-11 one thing may: two of our accounts clearing the same window
+within the hour (scripts/attribution.py). Everything else that was private on
+2026-09-30 still is, and an export that merely SAYS vendor_reset is still
+dropped.
+"""
 
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import build, claude_probe as cp, groundtruth as gt, quota_probe as qp
+from scripts import attribution, build, claude_probe as cp, groundtruth as gt, quota_probe as qp
 from tests.test_claude_probe import DAY, T0, usage_payload
 # Never the owner's real profile files: the same isolation that suite uses.
 from tests.test_claude_probe import setUpModule, tearDownModule  # noqa: F401
@@ -13,14 +19,39 @@ from tests.test_claude_probe import setUpModule, tearDownModule  # noqa: F401
 
 class ResetScopeTests(unittest.TestCase):
     def test_stale_exports_cannot_bypass_the_new_policy(self):
-        for verdict in ("vendor_reset", "unresolved", "self_applied", "credit_granted"):
+        for verdict in ("vendor_reset", "unresolved", "self_applied", "credit_granted",
+                        "unattributed", "account_change"):
             with self.subTest(verdict=verdict):
                 stale = {"verdict": verdict, "public": True,
                          "headline": "An old exporter claimed a vendor reset."}
                 self.assertEqual(build.public_observations([stale]), [])
                 self.assertEqual(build.build_observations({"observations": [stale]}), "")
 
-    def assert_private_clear(self, vendor, events):
+    def test_a_vendor_reset_needs_the_pair_not_the_word(self):
+        # The 2026-09-30 exporter's legacy rows said vendor_reset about a
+        # global_candidate. Even with a witness field written in, a row that
+        # attribution did not stamp, or whose witness is not beside it, stays
+        # out — and both stamped rows of a real pair go in.
+        def row(event_id, witness, account, **edit):
+            return {"event_id": event_id, "kind": "clear", "classification": "unattributed",
+                    "verdict": "vendor_reset", "public": True, "account": account,
+                    "attribution": attribution.ATTRIBUTION_TWO_ACCOUNTS, "witness": witness,
+                    "headline": "Two accounts.", **edit}
+        pair = [row("x", "y", "a"), row("y", "x", "b")]
+        self.assertEqual(len(build.public_observations(pair)), 2)
+        for broken in (
+            [row("x", "y", "a", classification="global_candidate"), pair[1]],
+            [row("x", "y", "a", attribution=None), pair[1]],
+            [pair[0]],
+            [pair[0], row("y", "x", "b", public=False)],
+            # Stamped itself, but its witness is not.
+            [pair[0], row("y", "x", "b", attribution=None)],
+        ):
+            with self.subTest(rows=broken):
+                published = build.public_observations(broken)
+                self.assertNotIn("a", {r.get("account") for r in published})
+
+    def assert_private_clear(self, vendor, events, *, trusted_post_confirms=False):
         exporter = cp if vendor == "anthropic" else qp
         clears = [e for e in events if e.get("kind") == "clear" and e.get("confirmed")]
         self.assertTrue(clears)
@@ -51,10 +82,15 @@ class ResetScopeTests(unittest.TestCase):
                 build.annotate_announcements(vendors, root)
                 self.assertNotEqual(vendors[vendor]["events"][0]["observed"]["status"],
                                     "confirmed")
-                line = gt.ground_truth_line(vendor, is_forecast=False, kind=kind, announced_at=T0 + 300,
-                                            now=T0 + 600, state_dir=root)
-                self.assertNotEqual(line.get("verdict"), "vendor_reset")
-                self.assertIsNot(line.get("observed"), True)
+                for trusted in (False, True):
+                    line = gt.ground_truth_line(vendor, is_forecast=False, kind=kind,
+                                                announced_at=T0 + 300, now=T0 + 600,
+                                                state_dir=root, trusted=trusted)
+                    self.assertNotEqual(line.get("verdict"), "vendor_reset")
+                    # One clean account may confirm only a trusted reset post
+                    # that says the reset already happened; nothing else may.
+                    confirms = trusted_post_confirms and trusted and kind == "reset"
+                    self.assertIs(line.get("observed") is True, confirms, (trusted, kind))
 
     def test_codex_bank_snapshots_do_not_prove_a_vendor_reset(self):
         for bank in ((2, 1, 1), (None, None, None), (1, None, 1),
@@ -90,7 +126,7 @@ class ResetScopeTests(unittest.TestCase):
             detector = qp.Detector(json.loads(json.dumps(detector.cursor())))
         clears = [e for e in events if e.get("kind") == "clear"]
         self.assertEqual(clears[0]["classification"], qp.CLASS_UNATTRIBUTED)
-        self.assert_private_clear("openai", events)
+        self.assert_private_clear("openai", events, trusted_post_confirms=True)
 
     def test_claude_weekly_personal_reset_is_not_vendor_evidence(self):
         for labels in (("a",), ("a", "b")):

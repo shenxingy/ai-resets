@@ -382,9 +382,31 @@ class ProbeBadgeTests(SiteCheckCase):
 # ─── Own-account observations must not leak ──────────────────────────────────
 
 
+PRIVATE_VERDICTS = (
+    "self_applied",
+    "credit_granted",
+    "unresolved",
+    "unattributed",
+    "account_change",
+    "session_only",
+)
+
+
+def with_observations(*rows):
+    data = json.loads(json.dumps(DATA))
+    data["vendors"]["anthropic"]["observations"] = list(rows)
+    return {"data.json": json.dumps(data)}
+
+
+def vendor_reset_row(event_id, witness, account):
+    return {"verdict": "vendor_reset", "event_id": event_id, "witness": witness,
+            "account": account, "observed_at": "2026-10-11T04:00:00Z",
+            "headline": "Our weekly window cleared early, and so did our other account's."}
+
+
 class ObservationPrivacyTests(SiteCheckCase):
     def test_a_private_verdict_in_the_feed_fails(self):
-        for verdict in ("self_applied", "credit_granted", "vendor_reset", "unresolved"):
+        for verdict in PRIVATE_VERDICTS:
             with self.subTest(verdict=verdict):
                 leaked = json.loads(json.dumps(DATA))
                 leaked["vendors"]["openai"]["observations"][0]["verdict"] = verdict
@@ -393,8 +415,42 @@ class ObservationPrivacyTests(SiteCheckCase):
                     **{"data.json": json.dumps(leaked)},
                 )
 
+    def test_a_witnessed_vendor_reset_may_be_published(self):
+        self.run_check(**with_observations(
+            vendor_reset_row("obs-a", "obs-b", "a"), vendor_reset_row("obs-b", "obs-a", "b"),
+        ))
+
+    def test_a_vendor_reset_without_its_second_account_fails(self):
+        # What a stale exporter wrote before 2026-09-30, and what a regression
+        # of the two-account rule would write: one account's word.
+        for rows in (
+            (vendor_reset_row("obs-a", None, "a"),),
+            (vendor_reset_row("obs-a", "obs-b", "a"),),
+            (vendor_reset_row("obs-a", "obs-a", "a"),),
+            (vendor_reset_row("obs-a", "obs-b", "a"),
+             {"verdict": "natural_expiry", "event_id": "obs-b"}),
+        ):
+            with self.subTest(rows=rows):
+                self.assert_fires("no second account beside it", **with_observations(*rows))
+
+    def test_a_withdrawn_incident_is_carried_but_draws_nothing(self):
+        withdrawn = {"verdict": None, "status": "retracted", "event_id": "obs-a",
+                     "incident_key": "anthropic:probe-weekly-1"}
+        self.run_check(**with_observations(withdrawn))
+        for field in ("headline", "evidence"):
+            with self.subTest(field=field):
+                self.assert_fires(
+                    f"withdrawn incident carries a {field}",
+                    **with_observations({**withdrawn, field: "Cleared early."}),
+                )
+        # Only a retraction is exempt from the verdict allowlist.
+        self.assert_fires("published verdict", **with_observations({**withdrawn, "status": "observed"}))
+
+    def test_vendor_reset_on_the_page_is_no_longer_a_leak(self):
+        self.run_check(**{"index.html": INDEX.replace("</body>", "<!-- vendor_reset --></body>")})
+
     def test_a_private_verdict_in_the_page_fails(self):
-        for verdict in ("self_applied", "credit_granted", "vendor_reset", "unresolved"):
+        for verdict in PRIVATE_VERDICTS:
             with self.subTest(verdict=verdict):
                 self.assert_fires(
                     "reached the rendered page",

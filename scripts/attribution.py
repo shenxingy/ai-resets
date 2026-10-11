@@ -196,6 +196,49 @@ def witnesses(events: Iterable[Any], *, ignore_retractions: bool = False) -> dic
     return found
 
 
+def pair_components(pairs: dict[str, str | None]) -> list[tuple[str, ...]]:
+    """One group per incident: the event ids joined through the witness each names.
+
+    Two accounts make one pair and one incident; three accounts clearing in
+    the same hour are still one reset, not three. Groups are sorted tuples in
+    a sorted list, so the answer never depends on the order of the log.
+    """
+    parent = {key: key for key in pairs}
+
+    def root(key: str) -> str:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    for key, other in pairs.items():
+        if other in parent:
+            parent[root(key)] = root(other)
+    groups: dict[str, list[str]] = {}
+    for key in pairs:
+        groups.setdefault(root(key), []).append(key)
+    return sorted(tuple(sorted(members)) for members in groups.values())
+
+
+def withdrawn_pairs(events: Iterable[Any]) -> list[tuple[str, ...]]:
+    """The groups the rule formed before a retraction broke them.
+
+    The same rule run with retractions ignored, minus every group that still
+    has a live member: without a retraction the two runs agree, so only a
+    withdrawn clear can leave a group here. A member still live means the
+    reset still stands on other accounts, and nobody is owed a correction.
+    """
+    records = [event for event in events if isinstance(event, dict)]
+    live = set(witnesses(records))
+    # Every key in a witness map has a witness, and witnessing is symmetric,
+    # so each group already holds at least two clears.
+    return [
+        group
+        for group in pair_components(witnesses(records, ignore_retractions=True))
+        if not live.intersection(group)
+    ]
+
+
 def attribute(events: Iterable[Any]) -> list[dict[str, Any]]:
     """Every record, copied, with the two-account verdict on the clears it upgrades.
 

@@ -224,6 +224,26 @@ class PairTests(unittest.TestCase):
         self.assertEqual(upgraded([a, b, rewritten]), {})
 
 
+class GroupTests(unittest.TestCase):
+    def test_a_pair_is_one_group_and_so_are_three_accounts(self):
+        self.assertEqual(at.pair_components({"x": "y", "y": "x"}), [("x", "y")])
+        self.assertEqual(at.pair_components({"a": "b", "b": "a", "c": "b"}), [("a", "b", "c")])
+        self.assertEqual(at.pair_components({"b": "a", "a": "b", "z": None}), [("a", "b"), ("z",)])
+        self.assertEqual(at.pair_components({}), [])
+
+    def test_a_broken_pair_is_withdrawn_and_a_standing_one_is_not(self):
+        a, b = clear("a", FP_A, T0), clear("b", FP_B, T0 + 60)
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"]}
+        self.assertEqual(at.withdrawn_pairs([a, b]), [])
+        self.assertEqual(at.withdrawn_pairs([a, b, withdrawn]),
+                         [tuple(sorted((a["event_id"], b["event_id"])))])
+        # A third account keeps the reset standing: nothing to correct.
+        c = clear("c", "cccccccccccc", T0 + 120)
+        self.assertEqual(at.withdrawn_pairs([a, b, c, withdrawn]), [])
+        # A lone retracted clear was never a pair.
+        self.assertEqual(at.withdrawn_pairs([a, {"kind": "retraction", "event_id": a["event_id"]}]), [])
+
+
 class StampTests(unittest.TestCase):
     def test_a_claim_already_on_a_record_is_stripped_not_believed(self):
         forged = clear(attribution=at.ATTRIBUTION_TWO_ACCOUNTS, witness="x:1",

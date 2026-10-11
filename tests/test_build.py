@@ -865,3 +865,340 @@ class FusionTests(unittest.TestCase):
         )
         self.assertEqual(events["status"], "announced")
         self.assertNotIn("incident_key", events)
+
+
+# ─── Two-account vendor resets: published, fused, and kept to one incident ───
+
+
+def export_pair(*, public=(True, True), stamp=True, accounts=("a", "b"), witness=None):
+    """Two exporter rows for one pair, in quota_probe.observation()'s shape."""
+    rows = []
+    ids = ("codex/10080:100", "b:codex/10080:160")
+    for index, (event_id, account) in enumerate(zip(ids, accounts)):
+        other = ids[1 - index]
+        row = {
+            "event_id": event_id, "kind": "clear", "classification": "unattributed",
+            "account": account, "verdict": "vendor_reset", "public": public[index],
+            "observed_at": fusion_iso(100 + 60 * index), "window": "weekly",
+            "observed_before": fusion_iso(40 + 60 * index),
+            "headline": "Our Codex weekly window cleared early, and so did a second account of ours.",
+            "evidence": "Two separate accounts.",
+        }
+        if stamp:
+            row.update(attribution="two_accounts", witness=witness or other)
+        rows.append(row)
+    return rows
+
+
+class VendorResetPublicationTests(unittest.TestCase):
+    def test_a_stamped_pair_is_published_with_opaque_ids(self):
+        rows = public_observations(export_pair())
+        self.assertEqual([r["verdict"] for r in rows], ["vendor_reset", "vendor_reset"])
+        by_account = {r["account"]: r for r in rows}
+        self.assertEqual(by_account["a"]["witness"], by_account["b"]["event_id"])
+        self.assertEqual(by_account["b"]["witness"], by_account["a"]["event_id"])
+        for row in rows:
+            # The raw id carries the slot key; a Claude model-scoped one would
+            # carry a model codename. Only a digest is published.
+            self.assertRegex(row["event_id"], r"^obs-[0-9a-f]{12}$")
+            self.assertNotIn("codex/10080", json.dumps(row))
+            for private in ("classification", "attribution", "public", "kind"):
+                self.assertNotIn(private, row)
+
+    def test_a_row_without_its_witness_beside_it_is_dropped(self):
+        cases = {
+            "unstamped (an old exporter)": export_pair(stamp=False),
+            "witness row withheld": export_pair(public=(True, False)),
+            "same account twice": export_pair(accounts=("a", "a")),
+            "names itself": export_pair(witness="codex/10080:100"),
+            "names a row not in the export": export_pair(witness="codex/10080:999"),
+        }
+        for name, rows in cases.items():
+            with self.subTest(case=name):
+                published = public_observations(rows)
+                self.assertNotIn(
+                    "a", {r.get("account") for r in published if r["verdict"] == "vendor_reset"}
+                )
+        lone = [export_pair()[0]]
+        self.assertEqual(public_observations(lone), [])
+        not_a_reset = export_pair()
+        not_a_reset[1]["verdict"] = "unattributed"
+        self.assertEqual(public_observations(not_a_reset), [])
+
+    def test_the_static_renderer_will_not_draw_a_lone_vendor_reset(self):
+        pair = public_observations(export_pair())
+        self.assertEqual(build_observations({"observations": pair}).count('data-verdict="vendor_reset"'), 2)
+        self.assertEqual(build_observations({"observations": pair[:1]}), "")
+        self.assertEqual(build.renderable_observations([dict(pair[0], witness=pair[0]["event_id"])]), [])
+
+
+class SingleAccountAnnotationTests(unittest.TestCase):
+    """One clean account clear confirms a TRUSTED retrospective post, 2 min later."""
+
+    # The fixtures of AnnounceAnnotationTests, borrowed rather than inherited
+    # so its own tests do not run a second time under this name.
+    CLEAR = AnnounceAnnotationTests.CLEAR
+    POST_AT = AnnounceAnnotationTests.POST_AT
+    setUp = AnnounceAnnotationTests.setUp
+    write_events = AnnounceAnnotationTests.write_events
+    write_health = AnnounceAnnotationTests.write_health
+    status = AnnounceAnnotationTests.status
+
+    def unattributed(self, t, account="a", fp="aaaaaaaaaaaa", **edit):
+        return {
+            **self.CLEAR, "event_id": f"{account}:{t}", "detected_at": t,
+            "classification": "unattributed", "account": account,
+            "account_fp_before": fp, "account_fp_after": fp,
+            "window_family": "codex/10080", "clear_bracket_lo": t - 60, "clear_bracket_hi": t,
+            **edit,
+        }
+
+    def trusted(self, **edit):
+        return {"openai": {"events": [{
+            "id": "1", "kind": "reset", "announced_at": fusion_iso(self.POST_AT),
+            "text": "Reset all propagated.", "text_verified": True, "announcer": "thsottiaux",
+            **edit,
+        }]}}
+
+    def test_one_account_confirms_and_says_which_and_when(self):
+        self.write_health("codex")
+        self.write_events([self.unattributed(self.POST_AT - 120)])
+        vendors = self.trusted()
+        annotate_announcements(vendors, self.state)
+        self.assertEqual(vendors["openai"]["events"][0]["observed"], {
+            "status": OBSERVED_CONFIRMED, "observed_at": fusion_iso(self.POST_AT - 120),
+            "lead_seconds": 120, "lead_minutes": 2, "verdict": "unattributed", "accounts": ["a"],
+        })
+
+    def test_a_clear_after_the_post_has_a_negative_lead(self):
+        self.write_health("codex")
+        self.write_events([self.unattributed(self.POST_AT + 23 * 60)])
+        vendors = self.trusted()
+        annotate_announcements(vendors, self.state)
+        self.assertEqual(vendors["openai"]["events"][0]["observed"]["lead_minutes"], -23)
+
+    def test_one_account_needs_trust_the_tense_and_the_window(self):
+        self.write_health("codex")
+        for name, (clear_t, edit) in {
+            "curated": (self.POST_AT - 120, {"text_verified": False}),
+            "forecast": (self.POST_AT + 120, {"text": "Resets will land in the next hour."}),
+            "unlabelled": (self.POST_AT - 120, {"kind": ""}),
+            "too early": (self.POST_AT - 3 * 3600 - 1, {}),
+            "too late": (self.POST_AT + 3601, {}),
+        }.items():
+            with self.subTest(case=name):
+                self.write_events([self.unattributed(clear_t)])
+                vendors = self.trusted(**edit)
+                annotate_announcements(vendors, self.state)
+                self.assertEqual(self.status(vendors), OBSERVED_NOT_SEEN)
+
+    def test_a_forecast_is_annotated_only_inside_the_six_hours(self):
+        self.write_health("codex")
+        pair = [
+            self.unattributed(self.POST_AT + 7 * 3600),
+            self.unattributed(self.POST_AT + 7 * 3600 + 60, account="b", fp="bbbbbbbbbbbb"),
+        ]
+        self.write_events(pair)
+        vendors = self.trusted(text="We will reset everyone's limits, landing end of day.")
+        annotate_announcements(vendors, self.state)
+        self.assertEqual(self.status(vendors), OBSERVED_NOT_SEEN)
+
+    def test_a_pair_confirms_any_post_and_names_both_accounts(self):
+        self.write_health("codex")
+        self.write_events([
+            self.unattributed(self.POST_AT - 5 * 3600),
+            self.unattributed(self.POST_AT - 5 * 3600 + 60, account="b", fp="bbbbbbbbbbbb"),
+        ])
+        vendors = self.trusted(text_verified=False)
+        annotate_announcements(vendors, self.state)
+        observed = vendors["openai"]["events"][0]["observed"]
+        self.assertEqual((observed["verdict"], observed["accounts"]), ("vendor_reset", ["a", "b"]))
+
+
+class ProbeFirstFusionTests(unittest.TestCase):
+    """Pairs that no trusted post claims become exactly one incident each."""
+
+    setUp = FusionTests.setUp
+    write_probe_log = FusionTests.write_probe_log
+
+    def pair(self, t, gap=60, **edit):
+        def one(account, fp, at):
+            return {
+                "event_id": f"{account}:codex/10080:{at}", "kind": "clear", "slot": "codex/10080",
+                "detected_at": at, "account": account, "window_family": "codex/10080",
+                "window_minutes": 10080, "used_before": 60.0, "used_after": 0.0,
+                "clear_bracket_lo": at - 60, "clear_bracket_hi": at,
+                "account_fp_before": fp, "account_fp_after": fp,
+                "classification": "unattributed", "confirmed": True, **edit,
+            }
+        return [one("a", "aaaaaaaaaaaa", t), one("b", "bbbbbbbbbbbb", t + gap)]
+
+    def exported(self, clears):
+        from scripts import attribution, quota_probe as qp
+        return public_observations([qp.observation(e, set()) for e in attribution.attribute(clears)])
+
+    def fuse_pair(self, clears, events=(), *, now=FUSION_NOW):
+        self.write_probe_log(clears)
+        vendors = {"openai": {"source": None, "fetched_at": None, "events": list(events),
+                              "observations": self.exported(clears)}}
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(now))
+        return vendors["openai"]
+
+    def test_one_incident_one_mailable_row_and_the_production_key(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        vendor = self.fuse_pair(clears)
+        rows = vendor["observations"]
+        self.assertEqual({r["incident_key"] for r in rows},
+                         {f"openai:probe-weekly-{FUSION_NOW - 3 * 3600 - 60}"})
+        self.assertEqual([r.get("status") for r in rows if "status" in r], ["observed"])
+        self.assertEqual(rows[0]["clears"][0]["account"], "a")
+
+    def test_the_hold_runs_from_the_later_clear(self):
+        # The first clear is past the 120-min hold; the second, 30 min later,
+        # is not. The pair is only a pair once its second half exists.
+        clears = self.pair(FUSION_NOW - 120 * 60 - 1700, gap=1800)
+        statuses = [r.get("status") for r in self.fuse_pair(clears)["observations"]]
+        self.assertIn("observed_pending", statuses)
+
+    def test_an_unverified_post_does_not_wear_the_pair_as_a_second_incident(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        post = trusted_event("100", announced_at=FUSION_NOW - 3 * 3600 + 300, text_verified=False)
+        vendor = self.fuse_pair(clears, [post])
+        self.assertEqual(vendor["events"][0]["status"], "candidate")
+        self.assertEqual([r.get("status") for r in vendor["observations"] if "status" in r],
+                         ["observed"])
+
+    def test_a_trusted_post_claims_the_pair_and_names_it_for_the_rename(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        post = trusted_event("100", announced_at=FUSION_NOW - 3 * 3600 + 300)
+        vendor = self.fuse_pair(clears, [post])
+        (event,) = vendor["events"]
+        self.assertEqual(event["status"], "confirmed")
+        self.assertEqual(event["merged_from"], f"openai:probe-weekly-{FUSION_NOW - 3 * 3600 - 60}")
+        for row in vendor["observations"]:
+            self.assertEqual(row["incident_key"], "openai:100")
+            self.assertNotIn("status", row)
+
+    def test_a_lone_clear_nearer_the_post_does_not_leave_the_pair_unclaimed(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        lone = dict(clears[0], event_id="a:codex/300:x", window_family="codex/300",
+                    detected_at=FUSION_NOW - 3 * 3600 + 290, clear_bracket_hi=FUSION_NOW - 3 * 3600 + 290)
+        post = trusted_event("100", announced_at=FUSION_NOW - 3 * 3600 + 300)
+        vendor = self.fuse_pair(clears + [lone], [post])
+        self.assertIn("merged_from", vendor["events"][0])
+        self.assertFalse(any("status" in r for r in vendor["observations"]))
+
+    def test_a_clear_that_cannot_confirm_does_not_hide_one_that_can(self):
+        # A natural expiry sits a minute from the post, the pair three hours
+        # before it. Picking the nearest clear of any kind first would leave
+        # the post merely `announced`.
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        expiry = dict(clears[0], event_id="a:natural", classification="natural_expiry",
+                      detected_at=FUSION_NOW - 60, clear_bracket_hi=FUSION_NOW - 60)
+        post = trusted_event("100", announced_at=FUSION_NOW - 120)
+        vendor = self.fuse_pair(clears + [expiry], [post])
+        self.assertEqual(vendor["events"][0]["status"], "confirmed")
+
+    def test_a_third_account_keeps_the_incident_standing_after_one_is_withdrawn(self):
+        a, b = self.pair(FUSION_NOW - 3 * 3600)
+        c = dict(b, event_id="c:codex/10080:x", account="c",
+                 account_fp_before="cccccccccccc", account_fp_after="cccccccccccc",
+                 detected_at=b["detected_at"] + 60, clear_bracket_hi=b["clear_bracket_hi"] + 60,
+                 clear_bracket_lo=b["clear_bracket_lo"] + 60)
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"]}
+        self.write_probe_log([a, b, c, withdrawn])
+        from scripts import attribution, quota_probe as qp
+        exported = public_observations(
+            [qp.observation(e, {b["event_id"]}) for e in attribution.attribute([a, b, c, withdrawn])]
+        )
+        vendors = {"openai": {"events": [], "observations": exported}}
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        statuses = [r.get("status") for r in vendors["openai"]["observations"] if "status" in r]
+        self.assertEqual(statuses, ["observed"])
+
+    def test_a_forecast_is_not_confirmed_by_a_grant_weeks_later(self):
+        # Rehearsed against the live data: without the +-6 h match window the
+        # 2026-08-21 "we will credit everyone" forecast read as confirmed by a
+        # credit grant that landed on 2026-09-03.
+        self.write_probe_log([{"kind": "credit_granted", "t": FUSION_NOW - 1800}])
+        forecast = trusted_event(
+            "100", announced_at=FUSION_NOW - 13 * 86400, upstream_reset_type="banked",
+            text="During the day we will credit everyone a banked reset.",
+            first_seen_at=fusion_iso(FUSION_NOW - 13 * 86400 + 60),
+        )
+        vendors = {"openai": {"events": [forecast], "probe": {"status": "ok"}}}
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        self.assertEqual(vendors["openai"]["events"][0]["status"], "forecast_lapsed")
+
+    def test_a_forecast_seven_hours_earlier_does_not_claim_a_pair(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        forecast = trusted_event(
+            "100", announced_at=FUSION_NOW - 10 * 3600,
+            text="We will reset everyone's limits, landing end of day.",
+        )
+        vendor = self.fuse_pair(clears, [forecast])
+        self.assertNotIn("merged_from", vendor["events"][0])
+        self.assertEqual([r.get("status") for r in vendor["observations"] if "status" in r],
+                         ["observed"])
+
+    def test_only_the_first_trusted_post_claims_a_pair(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        first = trusted_event("100", announced_at=FUSION_NOW - 3 * 3600 + 300)
+        second = trusted_event("200", announced_at=FUSION_NOW - 3 * 3600 + 900)
+        events = self.fuse_pair(clears, [first, second])["events"]
+        self.assertIn("merged_from", events[0])
+        self.assertNotIn("merged_from", events[1])
+
+    def test_a_post_with_no_id_cannot_claim_a_pair(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        vendor = self.fuse_pair(clears, [trusted_event("", announced_at=FUSION_NOW - 3 * 3600 + 300)])
+        self.assertNotIn("merged_from", vendor["events"][0])
+        self.assertEqual([r.get("status") for r in vendor["observations"] if "status" in r], ["observed"])
+
+    def test_a_pair_with_no_exported_row_waits_for_the_export(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        self.write_probe_log(clears)
+        vendors = {"openai": {"events": [], "observations": []}}
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        self.assertEqual(vendors["openai"]["observations"], [])
+        self.assertIn("no exported row", out.getvalue())
+
+    def test_a_withdrawn_half_turns_the_incident_into_a_retraction_row(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        rows = self.exported(clears)
+        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"]}
+        self.write_probe_log(clears + [withdrawn])
+        vendors = {"openai": {"events": [], "observations": []}}
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        (row,) = vendors["openai"]["observations"]
+        self.assertEqual((row["status"], row["verdict"]), ("retracted", None))
+        self.assertEqual(row["incident_key"], f"openai:probe-weekly-{FUSION_NOW - 3 * 3600 - 60}")
+        self.assertEqual(row["event_id"], min(r["event_id"] for r in rows if r["account"] == "a"))
+        self.assertNotIn("headline", row)
+        self.assertEqual(build_observations(vendors["openai"]), "")
+
+    def test_a_withdrawn_half_is_found_even_when_the_other_read_disagree(self):
+        # Claude: the first clear of a pair is written while the other account
+        # is busy, so it reads `disagree`. Once its partner is withdrawn it is
+        # a lone disagreeing clear, which the evidence reader skips — and the
+        # correction must still go to whoever was mailed about the pair.
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        clears[0]["concordance"] = "accounts_disagree"
+        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"]}
+        self.write_probe_log(clears + [withdrawn])
+        vendors = {"openai": {"events": [], "observations": []}}
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        self.assertEqual([r["status"] for r in vendors["openai"]["observations"]], ["retracted"])
+
+    def test_a_pair_both_at_the_limit_is_no_incident(self):
+        vendor = self.fuse_pair(self.pair(FUSION_NOW - 3 * 3600, used_before=99.0))
+        self.assertEqual(vendor["observations"], [])
+
+    def test_observed_single_is_never_written(self):
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        self.write_probe_log(clears)
+        vendors = {"openai": {"events": [], "observations": self.exported(clears)}}
+        with unittest.mock.patch.object(build.incidents, "has_witness", return_value=False):
+            build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        self.assertFalse(any("status" in r for r in vendors["openai"]["observations"]))
