@@ -42,6 +42,17 @@ Detection rests on four measured facts about the Codex weekly window:
    note "credit bank unchanged" even when the owner had just spent their own
    banked credit.
 
+5. A clear is attributed in the order docs/reset-attribution.md, "The rule"
+   fixes. Every row carries a fingerprint of the account and its plan, and a
+   change in either is an `account_change`, not a clear (2026-09-19/20 were
+   account switches). An early clear is self-applied when the bank held more,
+   or held an unexpired credit it no longer holds, anywhere from three polls
+   before its bracket (2026-10-04 spent its credit a poll BEFORE the window
+   cleared). Only when every own-cause check ran and passed is it
+   `unattributed`, and that is still private: a reset the account holder
+   paid for touches nothing this probe reads. A check that could not run
+   leaves it `global_candidate`, with the reason naming the check.
+
 The probe can also stop seeing anything at all: the RPC returned HTTP 404 for
 35 consecutive polls on 2026-09-03 (10:43-11:17 EDT) and nothing alerted. So
 every iteration writes probe_health.json — the file, not a cursor mtime, is
@@ -154,6 +165,26 @@ CREDITS_MAX_AGE_POLLS = 10
 # Say so once when a streak of absent readings passes this many polls.
 CREDITS_ABSENT_LOG_AFTER = 10
 
+# How far before a clear a falling bank still explains it. On 2026-10-04 the
+# count went 2 -> 1 at 02:43:52 UTC and the window cleared at 02:44:52, one
+# poll LATER, so the adjacent pair read 1 -> 1 and the owner's own credit was
+# filed as a clear nothing explained. Each slot keeps its int readings for at
+# least this many polls, and a clear looks back this far from its bracket.
+CREDIT_LOOKBACK_POLLS = 3
+# A clear bracketed by more polls than this leaves room for an own reset the
+# probe never saw: the bracket check fails and the clear cannot be
+# unattributed. Live clears land one poll wide; 2026-08-30 replayed at 6240s.
+TIGHT_BRACKET_POLLS = 3
+
+# The two facts the shared classifier cannot know about the account it is
+# watching. Codex has a banked-credit ledger and no local trace to read; the
+# Claude probe swaps both for the length of its own observe() calls
+# (claude_probe.anthropic_contract), the same way it swaps the cadence, so
+# its credit check reads "no_bank" rather than "unread", and an early clear
+# waits on the profile's reset-menu history before it can be unattributed.
+CREDIT_BANK = True
+LOCAL_TRACE = False
+
 # A restarted probe inherits the previous block's outage start only while that
 # block is still fresh; a month-old one would make the alert claim a month-long
 # blindness. Matches the reader's staleness cutoff in scripts/groundtruth.py.
@@ -168,6 +199,11 @@ EVENT_CREDIT_GRANTED = "credit_granted"
 # Reserved: no phase emits a limit change yet, but the export already has to
 # rank one, and the string belongs in exactly one place when it arrives.
 EVENT_LIMIT_CHANGE = "limit_change"
+# The account fingerprint or the plan differs between two readings of a slot.
+# 2026-09-19 (pro -> prolite) and 2026-09-20 (back, `codex login` 14s before)
+# were account switches that read as early clears; so was Claude account a's
+# Max -> Team login on 2026-10-11. Not a clear: the slot is re-baselined.
+EVENT_ACCOUNT_CHANGE = "account_change"
 
 # Vendor this probe speaks for, in the export envelope.
 EXPORT_VENDOR = "openai"
@@ -186,6 +222,30 @@ CLASS_GLOBAL = "global_candidate"
 # No active anchor on record: natural expiry cannot be ruled out, so this
 # must never be read as a global reset.
 CLASS_UNRESOLVED = "unresolved"
+# Early, and every own-cause this probe can observe was checked and excluded:
+# the same fingerprint and plan on both sides, the bank read on both sides and
+# unspent (or no bank at all), no reset menu in the profile's history, and a
+# bracket of at most TIGHT_BRACKET_POLLS. PRIVATE on its own: OpenAI's paid
+# instant reset and Anthropic's web-redeemed limit reset leave no trace any
+# probe can read, so one account cannot say whose reset this was.
+CLASS_UNATTRIBUTED = "unattributed"
+# The record of an account or plan switch, and what classify() returns for a
+# pair of rows that straddles one.
+CLASS_ACCOUNT_CHANGE = "account_change"
+
+# The value of each own-cause check on a clear event, `checks = {identity,
+# plan, credit, bracket, local_trace}` (docs/reset-attribution.md).
+CHECK_SAME = "same"
+CHECK_CHANGED = "changed"
+CHECK_UNREAD = "unread"
+CREDIT_UNSPENT = "unspent"
+CREDIT_SPENT = "spent"
+CREDIT_NO_BANK = "no_bank"
+BRACKET_TIGHT = "tight"
+BRACKET_WIDE = "wide"
+TRACE_NONE = "none"
+TRACE_FOUND = "found"
+TRACE_NA = "n_a"
 
 # ─── Public vocabulary ───────────────────────────────────────────────────────
 
@@ -199,12 +259,18 @@ VERDICT_VENDOR_RESET = "vendor_reset"
 VERDICT_UNRESOLVED = "unresolved"
 VERDICT_LIMIT_CHANGE = "limit_change"
 VERDICT_CREDIT_GRANTED = "credit_granted"
+# Both PRIVATE. `unattributed` is the most a single account can say, and an
+# account change says nothing about any reset at all.
+VERDICT_UNATTRIBUTED = "unattributed"
+VERDICT_ACCOUNT_CHANGE = "account_change"
 
 VERDICT_OF_CLASS: dict[str, str] = {
     CLASS_NATURAL: VERDICT_NATURAL_EXPIRY,
     CLASS_SELF: VERDICT_SELF_APPLIED,
     CLASS_GLOBAL: VERDICT_UNRESOLVED,
     CLASS_UNRESOLVED: VERDICT_UNRESOLVED,
+    CLASS_UNATTRIBUTED: VERDICT_UNATTRIBUTED,
+    CLASS_ACCOUNT_CHANGE: VERDICT_ACCOUNT_CHANGE,
 }
 
 # The product every generated sentence is about. The site tracks three vendors,
@@ -549,6 +615,54 @@ def last_known(state: dict[str, Any], field: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def rebaseline(state: dict[str, Any]) -> None:
+    """Forget everything a slot remembered about the account before a switch.
+
+    The pending clear, the anchor in force, and the whole credit history:
+    a credit count read on the old account is not a bank the new one could
+    have spent from, and its anchor is a different account's lattice.
+    """
+    for field in (
+        "pending",
+        "active_anchor",
+        "credits_known",
+        "credits_absent",
+        "credit_trail",
+        "credit_ids_known",
+        "identity",
+    ):
+        state.pop(field, None)
+
+
+def extend_trail(trail: Any, entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """The slot's recent int credit readings with `entry` appended.
+
+    Kept: every reading from the last CREDIT_LOOKBACK_POLLS polls, plus the
+    newest one before that, which was still the bank when that span opened
+    (trail_readings). Bounded, so the cursor does not grow a minute at a time.
+    """
+    kept = [e for e in trail if isinstance(e, dict)] if isinstance(trail, list) else []
+    kept.append(entry)
+    cutoff = entry["t"] - CREDIT_LOOKBACK_POLLS * POLL_SECONDS
+    recent = [e for e in kept if isinstance(e.get("t"), int) and e["t"] >= cutoff]
+    older = [e for e in kept if isinstance(e.get("t"), int) and e["t"] < cutoff]
+    return ([max(older, key=lambda e: e["t"])] if older else []) + recent
+
+
+def window_family(row: dict[str, Any]) -> str:
+    """The window a clear is on, as two accounts would both name it.
+
+    `codex/10080` for either Codex account: a second account's slot keys carry
+    a `b:` prefix (docs/reset-attribution.md), which is stripped here so the
+    two can be matched. The Claude probe states its own (`weekly_all`).
+    """
+    limit_id = str(row.get("limit_id") or "")
+    account = row.get("account")
+    if isinstance(account, str) and account and limit_id.startswith(f"{account}:"):
+        limit_id = limit_id[len(account) + 1:]
+    return f"{limit_id}/{row.get('window_minutes')}"
+
+
 def is_revert(pending: dict[str, Any], row: dict[str, Any]) -> bool:
     """Did this clear un-happen (2026-08-03), or did usage merely resume?
 
@@ -573,12 +687,161 @@ def is_revert(pending: dict[str, Any], row: dict[str, Any]) -> bool:
     return snapped_back
 
 
+def compare_field(before: Any, after: Any) -> str:
+    """`same` / `changed` / `unread` for one identity field across two rows.
+
+    Only two READ values can differ. A side that could not be read makes the
+    comparison unread, never "changed": an unreadable profile file is not a
+    new account, and it is not proof of the same one either.
+    """
+    if not (isinstance(before, str) and before and isinstance(after, str) and after):
+        return CHECK_UNREAD
+    return CHECK_SAME if before == after else CHECK_CHANGED
+
+
+def trail_readings(
+    trail: Any, start: int, end: int
+) -> list[dict[str, Any]]:
+    """Every banked-credit reading in force at some moment in [start, end].
+
+    That is the readings taken inside the span plus the one in force when it
+    opened, the last taken before `start`. The second matters because the
+    sample log only records a count when it MOVES: replayed from it, the 2
+    that preceded the 2026-10-04 spend was written at 01:21:52 UTC, 82
+    minutes before the clear, and it was still the bank at the start of the
+    lookback. Live, the probe reads every poll and the two rules coincide.
+    """
+    opening: dict[str, Any] | None = None
+    inside: list[dict[str, Any]] = []
+    for entry in trail if isinstance(trail, list) else ():
+        if not isinstance(entry, dict):
+            continue
+        moment, count = entry.get("t"), entry.get("count")
+        if not isinstance(moment, int) or not isinstance(count, int):
+            continue
+        if moment < start:
+            if opening is None or moment >= opening["t"]:
+                opening = entry
+        elif moment <= end:
+            inside.append(entry)
+    return ([opening] if opening is not None else []) + inside
+
+
+def credit_left(
+    trail: Any,
+    lo: int,
+    hi: int,
+    after_count: Any,
+    after_ids: Any,
+    poll_seconds: int,
+) -> str | None:
+    """Why the bank says this clear was paid for out of it, or None.
+
+    A clear is self-applied when, anywhere from CREDIT_LOOKBACK_POLLS polls
+    before its bracket to the read that showed it, the bank held MORE than it
+    holds after, or held a credit that is gone after it without having
+    reached its own expiry. The count alone misses a grant and a redemption
+    that cancel between two polls; an id leaving early does not.
+    """
+    readings = trail_readings(trail, lo - CREDIT_LOOKBACK_POLLS * poll_seconds, hi)
+    if isinstance(after_count, int) and not isinstance(after_count, bool):
+        higher = [entry for entry in readings if entry["count"] > after_count]
+        if higher:
+            top = max(higher, key=lambda entry: (entry["count"], entry["t"]))
+            return (
+                f"banked credit count read {top['count']} {max(0, hi - top['t'])}s "
+                f"before the clear was seen and {after_count} after it"
+            )
+    if isinstance(after_ids, list):
+        remaining = {credit.get("id") for credit in after_ids if isinstance(credit, dict)}
+        for entry in readings:
+            for credit in entry.get("ids") or ():
+                if not isinstance(credit, dict) or credit.get("id") in remaining:
+                    continue
+                expires_at = credit.get("expires_at")
+                if expires_at is None or (isinstance(expires_at, int) and expires_at > hi):
+                    return (
+                        f"banked credit {credit.get('id')} left the bank before its "
+                        "own expiry"
+                    )
+    return None
+
+
+# Each own-cause check, in the contract's order, with the sentence the reason
+# uses when it could not be run.
+UNCHECKED_REASONS = {
+    "identity": "the account fingerprint was not read on both sides",
+    "plan": "the plan was not read on both sides",
+    "credit": "the banked credit count was not read on both sides",
+    "bracket": "the clear is bracketed by more than three polls",
+    "local_trace": "the profile's reset-menu history was not read",
+}
+
+
+def unchecked(checks: dict[str, Any]) -> list[str]:
+    """The checks an early clear did not pass, in the contract's order.
+
+    A check passes only on its one clearing value: `same` for identity and
+    plan, `unspent` or `no_bank` for credit, `tight` for the bracket, `none`
+    or `n_a` for the local trace. Anything else — unread, a value this build
+    does not know, the key missing altogether — is a check not run.
+    """
+    passing = {
+        "identity": (CHECK_SAME,),
+        "plan": (CHECK_SAME,),
+        "credit": (CREDIT_UNSPENT, CREDIT_NO_BANK),
+        "bracket": (BRACKET_TIGHT,),
+        "local_trace": (TRACE_NONE, TRACE_NA),
+    }
+    return [name for name, ok in passing.items() if checks.get(name) not in ok]
+
+
+def attribute_early_clear(
+    checks: dict[str, Any],
+    early_by: int,
+    details: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    """(classification, reason) for an early clear no own-cause explained.
+
+    `unattributed` only when every check ran and passed (contract step 5).
+    Otherwise `global_candidate`, the legacy name for "unresolved, because a
+    check could not be run", and the reason names each one. Shared with the
+    Claude probe, which re-runs it once it has read the profile's history.
+    """
+    failing = unchecked(checks)
+    if not failing:
+        credit = (
+            "no banked-credit ledger to read"
+            if checks.get("credit") == CREDIT_NO_BANK
+            else "the bank read on both sides with no credit leaving it"
+        )
+        trace = (
+            ", no reset menu in the profile's history"
+            if checks.get("local_trace") == TRACE_NONE
+            else ""
+        )
+        return CLASS_UNATTRIBUTED, (
+            f"cleared {early_by}s early; checked and excluded: same account, same "
+            f"plan, {credit}{trace}, a tight bracket. A reset the account holder "
+            "bought leaves no trace this probe can read"
+        )
+    details = details or {}
+    missing = "; ".join(details.get(name) or UNCHECKED_REASONS[name] for name in failing)
+    return CLASS_GLOBAL, (
+        f"cleared {early_by}s early; cause unverified, personal reset use cannot "
+        f"be ruled out ({missing})"
+    )
+
+
 def classify(
     previous: dict[str, Any],
     current: dict[str, Any],
     active_anchor: int | None,
     credits_known: dict[str, Any] | None = None,
-    poll_seconds: int = POLL_SECONDS,
+    poll_seconds: int | None = None,
+    *,
+    credit_trail: Any = None,
+    anchor_jump: bool = False,
 ) -> dict[str, Any]:
     """Apply the decision table to one observed clear.
 
@@ -588,7 +851,15 @@ def classify(
 
     `credits_known` is the slot's last int reading of the banked-credit field,
     `{"value": n, "t": epoch}`, used only where the immediate reading is None.
+    `credit_trail` is the slot's recent int readings (see credit_left), and
+    `anchor_jump` says the clear was recovered across a blind gap.
+
+    The order is docs/reset-attribution.md, "The rule": an account change is
+    not a clear at all; then unresolved, natural expiry, self-applied, and
+    only then unattributed or, when a check could not be run, global. The
+    cadence is read at CALL time, because the Claude probe swaps it.
     """
+    poll = POLL_SECONDS if poll_seconds is None else poll_seconds
     early_by = None
     if active_anchor is not None:
         # `current["t"]` is the first observation of the cleared state, so it
@@ -597,17 +868,49 @@ def classify(
         early_by = active_anchor - current["t"]
 
     before, before_carried = resolve_credits(
-        previous.get("credits_available"), credits_known, previous["t"], poll_seconds
+        previous.get("credits_available"), credits_known, previous["t"], poll
     )
     after, after_carried = resolve_credits(
-        current.get("credits_available"), credits_known, current["t"], poll_seconds
+        current.get("credits_available"), credits_known, current["t"], poll
     )
     carried = before_carried or after_carried
     credit_spent = (
         isinstance(before, int) and isinstance(after, int) and after < before
     )
+    lo, hi = previous["t"], current["t"]
+    left = None
+    if CREDIT_BANK and not credit_spent:
+        left = credit_left(credit_trail, lo, hi, after, current.get("credit_ids"), poll)
 
-    if early_by is None:
+    if not CREDIT_BANK:
+        credit = CREDIT_NO_BANK
+    elif credit_spent or left:
+        credit = CREDIT_SPENT
+    elif isinstance(before, int) and isinstance(after, int) and not carried:
+        credit = CREDIT_UNSPENT
+    else:
+        credit = CHECK_UNREAD
+    checks = {
+        "identity": compare_field(previous.get("account_fp"), current.get("account_fp")),
+        "plan": compare_field(previous.get("plan_type"), current.get("plan_type")),
+        "credit": credit,
+        "bracket": (
+            BRACKET_TIGHT
+            if hi - lo <= TIGHT_BRACKET_POLLS * poll and not anchor_jump
+            else BRACKET_WIDE
+        ),
+        "local_trace": TRACE_NA,
+    }
+
+    if CHECK_CHANGED in (checks["identity"], checks["plan"]):
+        # The Detector re-baselines before it ever calls this on such a pair;
+        # this is the second lock, for any caller that hands one in directly.
+        verdict = CLASS_ACCOUNT_CHANGE
+        reason = (
+            f"account {checks['identity']}, plan {checks['plan']} across the "
+            "readings; two accounts' quotas are not one window clearing"
+        )
+    elif early_by is None:
         verdict = CLASS_UNRESOLVED
         reason = "no active anchor on record yet; cannot rule out natural expiry"
     elif early_by <= NATURAL_GRACE_SECONDS:
@@ -619,16 +922,30 @@ def classify(
     elif credit_spent:
         verdict = CLASS_SELF
         reason = f"banked credit count fell {before} -> {after}; possible personal reset use"
+    elif left:
+        verdict = CLASS_SELF
+        reason = f"{left}; possible personal reset use"
     else:
-        verdict = CLASS_GLOBAL
-        reason = (
-            f"cleared {early_by}s early; cause unverified, "
-            "personal reset use cannot be ruled out"
-        )
+        if LOCAL_TRACE:
+            # Not read here: the caller reads the profile's history at clear
+            # time and re-runs attribute_early_clear. Until it does, the clear
+            # cannot be unattributed.
+            checks["local_trace"] = CHECK_UNREAD
+        details = {}
         if carried:
             # Say which reading was inferred: "unchanged" is weaker evidence
             # when the field itself was absent on the row that showed the clear.
-            reason += " (bank taken from the last readable count)"
+            details["credit"] = "the bank was taken from the last readable count"
+        if anchor_jump:
+            details["bracket"] = (
+                f"the clear was recovered across a {hi - lo}s blind gap (anchor_jump)"
+            )
+        elif checks["bracket"] != BRACKET_TIGHT:
+            details["bracket"] = (
+                f"the clear is bracketed by {hi - lo}s, more than "
+                f"{TIGHT_BRACKET_POLLS * poll}s"
+            )
+        verdict, reason = attribute_early_clear(checks, early_by, details)
 
     return {
         "classification": verdict,
@@ -638,6 +955,7 @@ def classify(
         "credits_before": before,
         "credits_after": after,
         "credits_carried": carried,
+        "checks": checks,
     }
 
 
@@ -686,6 +1004,16 @@ class Detector:
         state = self.slots.setdefault(key, {})
         events: list[dict[str, Any]] = []
         previous = state.get("last")
+
+        change = self._account_change(state, key, previous, row)
+        if change is not None:
+            # Before clear detection, not after: 100% on one account and 0% on
+            # another is two quotas, not one window clearing. Nothing the slot
+            # remembered describes the new account, so all of it goes, and
+            # this row is the first reading of a fresh baseline.
+            events.append(change)
+            rebaseline(state)
+            previous = None
 
         if previous is not None and is_clear(previous, row):
             anchor_before = state.get("active_anchor")
@@ -754,7 +1082,7 @@ class Detector:
             # shape that cost us the 2026-09-02 event.
             events.append(
                 {
-                    **self._clear_record(state, key, previous, row),
+                    **self._clear_record(state, key, previous, row, anchor_jump=True),
                     "reanchored": True,
                     "confirmed": True,
                     "confirmed_at": row["t"],
@@ -775,17 +1103,73 @@ class Detector:
         return events
 
     @staticmethod
+    def _account_change(
+        state: dict[str, Any],
+        key: str,
+        previous: dict[str, Any] | None,
+        row: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """The account_change record when this row is a different account.
+
+        Compared against the last fingerprint and plan the slot READ, not only
+        the previous row: a `/login` rewrites the profile file, and a poll that
+        lands mid-rewrite reads no identity at all. Comparing adjacent rows
+        only would let the switch pass through that unread row unseen.
+        """
+        if previous is None:
+            return None
+        before_fp, after_fp = last_known(state, "account_fp"), row.get("account_fp")
+        before_plan, after_plan = last_known(state, "plan_type"), row.get("plan_type")
+        identity = compare_field(before_fp, after_fp)
+        plan = compare_field(before_plan, after_plan)
+        if CHECK_CHANGED not in (identity, plan):
+            return None
+        what = []
+        if identity == CHECK_CHANGED:
+            what.append(f"account fingerprint {before_fp} -> {after_fp}")
+        if plan == CHECK_CHANGED:
+            what.append(f"plan {before_plan} -> {after_plan}")
+        return {
+            "event_id": f"{key}:account:{row['t']}",
+            "kind": EVENT_ACCOUNT_CHANGE,
+            "classification": CLASS_ACCOUNT_CHANGE,
+            "slot": key,
+            "limit_id": row["limit_id"],
+            "window_minutes": row["window_minutes"],
+            "account": row.get("account"),
+            "t": row["t"],
+            # The previous reading, so the change is bracketed like a clear.
+            "seen_before": previous["t"],
+            "account_fp_before": before_fp,
+            "account_fp_after": after_fp,
+            "plan_before": before_plan,
+            "plan_after": after_plan,
+            "used_before": previous["used_percent"],
+            "used_after": row["used_percent"],
+            "checks": {"identity": identity, "plan": plan},
+            "reason": (
+                f"{' and '.join(what)}; a different account's quota is not this "
+                "window clearing, so the slot was re-baselined"
+            ),
+        }
+
+    @staticmethod
     def _clear_record(
         state: dict[str, Any],
         key: str,
         previous: dict[str, Any],
         row: dict[str, Any],
+        *,
+        anchor_jump: bool = False,
     ) -> dict[str, Any]:
         """The fields every clear carries, whatever signature found it.
 
         `clear_bracket_*` is the window the clear happened inside: for the
         consecutive-poll signature that is one poll interval, for an
-        anchor jump it is the whole blind gap, which may be hours.
+        anchor jump it is the whole blind gap, which may be hours. The
+        identity on both sides is copied on, because the event log is what a
+        clear is attributed from afterwards and the sample log may not hold
+        the rows that carried it.
         """
         return {
             "event_id": f"{key}:{row['t']}",
@@ -794,12 +1178,25 @@ class Detector:
             "slot": key,
             "limit_id": row["limit_id"],
             "window_minutes": row["window_minutes"],
+            "account": row.get("account"),
+            "window_family": window_family(row),
             "used_before": previous["used_percent"],
             "used_after": row["used_percent"],
             "clear_bracket_lo": previous["t"],
             "clear_bracket_hi": row["t"],
+            "account_fp_before": previous.get("account_fp"),
+            "account_fp_after": row.get("account_fp"),
+            "plan_before": previous.get("plan_type"),
+            "plan_after": row.get("plan_type"),
             "confirmations": 1,
-            **classify(previous, row, state.get("active_anchor"), state.get("credits_known")),
+            **classify(
+                previous,
+                row,
+                state.get("active_anchor"),
+                state.get("credits_known"),
+                credit_trail=state.get("credit_trail"),
+                anchor_jump=anchor_jump,
+            ),
         }
 
     @staticmethod
@@ -813,24 +1210,41 @@ class Detector:
         flap. If it read None and a following row reads a LOWER count, the
         spend was ours: publishing the first verdict (global_candidate, "credit
         bank unchanged") would put the owner's own banked credit out as a
-        vendor-wide reset. Only that direction is corrected — nothing here can
-        turn a self-applied clear into a global one.
+        vendor-wide reset. The bank can also move a poll AFTER the window, the
+        mirror of 2026-10-04, so an `unattributed` clear is corrected the same
+        way, against the whole lookback and the credit ids as well as the
+        count. Only that direction is corrected — nothing here can turn a
+        self-applied clear into a global or unattributed one.
         """
-        if pending.get("confirmed") or pending.get("classification") != CLASS_GLOBAL:
+        if pending.get("confirmed") or pending.get("classification") not in (
+            CLASS_GLOBAL,
+            CLASS_UNATTRIBUTED,
+        ):
             return
         before = pending.get("credits_before")
         after, carried = resolve_credits(
             row.get("credits_available"), state.get("credits_known"), row["t"]
         )
-        if not isinstance(before, int) or not isinstance(after, int) or after >= before:
-            return
+        late = row["t"] - pending["detected_at"]
+        if isinstance(before, int) and isinstance(after, int) and after < before:
+            reason = f"banked credit count fell {before} -> {after}, read {late}s after the clear"
+        else:
+            lo, hi = pending.get("clear_bracket_lo"), pending.get("clear_bracket_hi")
+            left = None
+            if isinstance(lo, int) and isinstance(hi, int):
+                left = credit_left(
+                    state.get("credit_trail"), lo, hi, after, row.get("credit_ids"), POLL_SECONDS
+                )
+            if left is None:
+                return
+            reason = f"{left}, read {late}s after the clear"
         pending["classification"] = CLASS_SELF
         pending["credits_after"] = after
         pending["credits_carried"] = bool(pending.get("credits_carried")) or carried
-        pending["reason"] = (
-            f"banked credit count fell {before} -> {after}, read "
-            f"{row['t'] - pending['detected_at']}s after the clear"
-        )
+        pending["reason"] = reason
+        if isinstance(pending.get("checks"), dict):
+            # A new dict, never an edit: an emitted event may share this one.
+            pending["checks"] = {**pending["checks"], "credit": CREDIT_SPENT}
 
     @staticmethod
     def _track_credits(
@@ -855,6 +1269,10 @@ class Detector:
         known = state.get("credits_known")
         previous_count = known.get("value") if isinstance(known, dict) else None
         state["credits_known"] = {"value": credit, "t": row["t"]}
+        state["credit_trail"] = extend_trail(
+            state.get("credit_trail"),
+            {"t": row["t"], "count": credit, "ids": row.get("credit_ids")},
+        )
         if not isinstance(previous_count, int) or credit <= previous_count:
             return []
         # A grant says something happened to THIS account's bank, not to any
@@ -1200,6 +1618,9 @@ def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     Only scheduled clears can currently be published. Early or unanchored
     clears may be personal reset use, even with an unchanged credit balance.
     They remain in the owner's log as unresolved, including historical rows.
+    An `unattributed` clear is no exception: one account with every own-cause
+    excluded still cannot rule out a reset its holder paid for. An account
+    change is not a clear at all.
 
     What stays private is what describes the OWNER: a self-applied clear and a
     credit grant reveal how the account holder spends their own banked credit.
@@ -1348,6 +1769,48 @@ def _percent(value: Any) -> str:
     return f"{value:g}%"
 
 
+def checked_clause(event: dict[str, Any]) -> str:
+    """`the same account and plan were read on both sides of a 60-second bracket`.
+
+    Printed from the record's own bracket; an unattributed clear always has
+    one, and a record missing it loses the number rather than inventing it.
+    """
+    lo, hi = _epoch(event.get("clear_bracket_lo")), _epoch(event.get("clear_bracket_hi"))
+    span = f" of a {hi - lo}-second bracket" if lo is not None and hi is not None else ""
+    return f"the same account and plan were read on both sides{span}"
+
+
+def account_change_sentences(event: dict[str, Any], window: str) -> tuple[str, str]:
+    """Headline and evidence for an account or plan switch, either probe.
+
+    Names what changed and never prints a fingerprint: those identify an
+    account to the owner, and a sentence is the part most likely to travel.
+    It also makes no claim about any reset, either way — two accounts'
+    readings cannot be compared as one window.
+    """
+    checks = event.get("checks") if isinstance(event.get("checks"), dict) else {}
+    plan_before, plan_after = event.get("plan_before"), event.get("plan_after")
+    plan_moved = checks.get("plan") == CHECK_CHANGED
+    account_moved = checks.get("identity") == CHECK_CHANGED
+    if account_moved and plan_moved:
+        what = f"a different account on a different plan ({plan_before} to {plan_after})"
+    elif plan_moved:
+        what = f"the plan changed from {plan_before} to {plan_after}"
+    elif account_moved:
+        what = "a different account was signed in"
+    else:
+        what = "the account changed"
+    lo, hi = pacific(event.get("seen_before")), pacific(event.get("t"))
+    moment = f"between {lo} and {hi}" if lo and hi else (f"by {hi}" if hi else "")
+    change = f"{_percent(event.get('used_before'))} to {_percent(event.get('used_after'))}"
+    return (
+        f"The account behind {window} changed.",
+        f"{what[0].upper()}{what[1:]}{' ' + moment if moment else ''}. Usage read "
+        f"{change} across it, which compares two different quotas, so the window was "
+        "started afresh instead of being read as a clear.",
+    )
+
+
 def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[str, str]:
     """The headline and the evidence line, built from fields and nothing else.
 
@@ -1419,6 +1882,9 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
             "not a reset.",
         )
 
+    if verdict == VERDICT_ACCOUNT_CHANGE:
+        return account_change_sentences(event, f"our {window} window")
+
     if verdict == VERDICT_LIMIT_CHANGE:
         return (
             f"The size of our {window} limit changed.",
@@ -1467,6 +1933,16 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
             "out. This is not evidence of a provider-wide reset.",
         )
 
+    if verdict == VERDICT_UNATTRIBUTED:
+        return (
+            f"Our {window} window cleared {early} early, with no cause on our side "
+            "that this probe can see.",
+            f"{change} {moment}, {gap}; {checked_clause(event)}, and the banked credit "
+            f"count read {before_credits} then {after_credits} with no credit leaving "
+            "the bank. A reset the account holder paid for leaves no trace this probe "
+            "can read, so one account alone cannot say whose reset this was.",
+        )
+
     if verdict == VERDICT_SELF_APPLIED:
         return (
             f"Our {window} window cleared {early} early with possible personal "
@@ -1511,6 +1987,8 @@ def observation(event: dict[str, Any], retracted_ids: set[str]) -> dict[str, Any
     elif kind == EVENT_LIMIT_CHANGE:
         verdict = VERDICT_LIMIT_CHANGE
         observed_at = event.get("clear_bracket_hi") or event.get("detected_at")
+    elif kind == EVENT_ACCOUNT_CHANGE:
+        verdict, observed_at = VERDICT_ACCOUNT_CHANGE, event.get("t")
     else:
         # A record whose classification this exporter does not know gets no
         # verdict rather than the nearest one: every verdict is a claim.
@@ -1533,8 +2011,14 @@ def observation(event: dict[str, Any], retracted_ids: set[str]) -> dict[str, Any
         # consecutive-poll detection, the whole blind gap for an anchor jump.
         # A credit grant has no bracket on record and states none rather than
         # collapsing to a zero-width one it never measured.
-        "observed_before": iso_utc(event.get("clear_bracket_lo")),
-        "observed_after": iso_utc(event.get("clear_bracket_hi")),
+        "observed_before": iso_utc(
+            event.get("seen_before")
+            if kind == EVENT_ACCOUNT_CHANGE
+            else event.get("clear_bracket_lo")
+        ),
+        "observed_after": iso_utc(
+            event.get("t") if kind == EVENT_ACCOUNT_CHANGE else event.get("clear_bracket_hi")
+        ),
         "early_by_hours": early_by_hours(event.get("early_by_seconds")),
     }
     if kind == EVENT_CLEAR and event.get("event_id") in retracted_ids:
@@ -1683,7 +2167,8 @@ def collapse_key(event: dict[str, Any]) -> str:
 
     One vendor action can arrive as several records. A banked credit grant is
     reported on EVERY limit window, so the two real grants in this account's
-    history are six records; they collapse on the moment they landed.
+    history are six records; they collapse on the moment they landed. An
+    account change is reported on every slot of the account that switched.
 
     Everything else keeps its kind in the key, because a retraction carries the
     SAME event_id as the clear it withdraws — collapsing those would drop the
@@ -1693,6 +2178,9 @@ def collapse_key(event: dict[str, Any]) -> str:
     moment = _epoch(event.get("detected_at") or event.get("t"))
     if kind == EVENT_CREDIT_GRANTED:
         return f"{kind}:{moment}"
+    if kind == EVENT_ACCOUNT_CHANGE:
+        # One login is seen on every slot of that account at the same read.
+        return f"{kind}:{event.get('account')}:{moment}"
     identity = event.get("event_id") or f"{event.get('slot')}:{moment}"
     return f"{kind}:{identity}"
 
@@ -1708,10 +2196,12 @@ def export_observations(
 
     This is the export boundary. The internal CLASS_* names stop here and the
     published vocabulary starts, and each observation carries the two sentences
-    that say, in plain words, which of the four things happened: the window
-    reached its own scheduled expiry, this account spent its own banked credit,
-    the window cleared early with an unverified cause, or there was no expiry
-    time on record and we cannot tell. Only scheduled clears are public.
+    that say, in plain words, what happened: the window reached its own
+    scheduled expiry, this account spent its own banked credit, the window
+    cleared early with every own-cause this probe can see excluded, it cleared
+    early with a check that could not be run, there was no expiry time on
+    record and we cannot tell, or the account behind it changed. Only
+    scheduled clears are public.
     """
     now = int(time.time()) if now is None else now
     events = read_events(EVENTS_FILE)
@@ -1803,6 +2293,9 @@ def poll_once(
                 f"{event['credits_before']} -> {event['credits_after']} "
                 f"at {event['t']} — an observation, not a reset"
             )
+            continue
+        if event.get("kind") == EVENT_ACCOUNT_CHANGE:
+            log(f"ACCOUNT CHANGED {event['slot']} at {event['t']} — {event['reason']}")
             continue
         log(
             f"DETECTED [{event['classification']}] {event['slot']} "

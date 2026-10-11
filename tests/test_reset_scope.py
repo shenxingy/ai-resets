@@ -71,6 +71,25 @@ class ResetScopeTests(unittest.TestCase):
                     detector = qp.Detector(json.loads(json.dumps(detector.cursor())))
                 self.assert_private_clear("openai", events)
 
+    def test_an_unattributed_codex_clear_is_still_not_vendor_evidence(self):
+        # Every own-cause check passes: same fingerprint, same plan, bank read
+        # on both sides and unspent, one poll wide. That is the most one
+        # account can say, and it still cannot rule out a reset its holder
+        # paid for, so neither route may treat it as the vendor's.
+        detector, events = qp.Detector(), []
+        for i, used in enumerate((80, 0, 0)):
+            events += detector.observe({
+                "t": T0 + i * 60, "limit_id": "codex", "slot": "secondary",
+                "window_minutes": 10080, "used_percent": used,
+                "resets_at": T0 + (3 if i == 0 else 7) * DAY,
+                "credits_available": 1, "plan_type": "pro", "account": "a",
+                "account_fp": "aaaaaaaaaaaa", "credit_ids": [],
+            })
+            detector = qp.Detector(json.loads(json.dumps(detector.cursor())))
+        clears = [e for e in events if e.get("kind") == "clear"]
+        self.assertEqual(clears[0]["classification"], qp.CLASS_UNATTRIBUTED)
+        self.assert_private_clear("openai", events)
+
     def test_claude_weekly_personal_reset_is_not_vendor_evidence(self):
         for labels in (("a",), ("a", "b")):
             with self.subTest(accounts=labels):

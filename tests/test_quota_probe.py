@@ -1093,6 +1093,394 @@ class CreditGrantedTest(unittest.TestCase):
         self.assertIsNotNone(d.slots["codex/10080"]["pending"])
 
 
+# ─── Attribution: whose reset was it ─────────────────────────────────────────
+
+FP_A = "aaaaaaaaaaaa"
+FP_B = "bbbbbbbbbbbb"
+CREDIT_1 = {"id": "c00000000001", "expires_at": None}
+CREDIT_2 = {"id": "c00000000002", "expires_at": None}
+
+
+def held(t, used, resets_at=None, credits=1, ids=(CREDIT_1,), account_fp=FP_A, plan="pro", **extra):
+    """A row from an account whose identity and bank were both read."""
+    return sample(
+        t, used, resets_at, credits=credits, plan_type=plan, account="a",
+        account_fp=account_fp, credit_ids=None if ids is None else list(ids), **extra,
+    )
+
+
+def clear_pair(**after):
+    """An early clear one poll wide, with every own-cause check passing."""
+    before = held(0, 90, 1_000_000)
+    return before, {**held(60, 0, 60 + WEEK_SECONDS), **after}
+
+
+class AttributionTest(unittest.TestCase):
+    """docs/reset-attribution.md, "The rule", steps 1-6."""
+
+    def test_every_check_passing_is_unattributed(self):
+        before, after = clear_pair()
+        verdict = qp.classify(before, after, 1_000_000)
+        self.assertEqual(verdict["classification"], qp.CLASS_UNATTRIBUTED)
+        self.assertEqual(
+            verdict["checks"],
+            {"identity": "same", "plan": "same", "credit": "unspent",
+             "bracket": "tight", "local_trace": "n_a"},
+        )
+
+    def test_each_check_that_cannot_run_keeps_the_clear_unresolved(self):
+        # Contract step 6: early, but one check could not be run, and the
+        # reason has to say which one.
+        cases = {
+            "identity": ({}, {"account_fp": None}, {}, "account fingerprint"),
+            "plan": ({}, {"plan_type": None}, {}, "plan was not read"),
+            "credit": ({}, {"credits_available": None}, {}, "banked credit count"),
+            "bracket": ({"t": 60 - 4 * qp.POLL_SECONDS - 1}, {}, {}, "bracketed by"),
+            "anchor_jump": ({}, {}, {"anchor_jump": True}, "blind gap"),
+        }
+        for name, (before_edit, after_edit, kwargs, said) in cases.items():
+            with self.subTest(check=name):
+                before, after = clear_pair(**after_edit)
+                before = {**before, **before_edit}
+                verdict = qp.classify(before, after, 1_000_000, **kwargs)
+                self.assertEqual(verdict["classification"], qp.CLASS_GLOBAL)
+                self.assertIn(said, verdict["reason"])
+
+    def test_a_carried_bank_is_not_a_bank_read_on_both_sides(self):
+        before, after = clear_pair(credits_available=None)
+        verdict = qp.classify(before, after, 1_000_000, {"value": 1, "t": 0})
+        self.assertEqual(verdict["checks"]["credit"], "unread")
+        self.assertEqual(verdict["classification"], qp.CLASS_GLOBAL)
+        self.assertIn("last readable count", verdict["reason"])
+
+    def test_the_bracket_boundary_is_inclusive_at_three_polls(self):
+        width = qp.TIGHT_BRACKET_POLLS * qp.POLL_SECONDS
+        before, after = clear_pair()
+        tight = qp.classify({**before, "t": 60 - width}, after, 1_000_000)
+        wide = qp.classify({**before, "t": 60 - width - 1}, after, 1_000_000)
+        self.assertEqual(tight["checks"]["bracket"], "tight")
+        self.assertEqual(wide["checks"]["bracket"], "wide")
+
+    def test_a_changed_fingerprint_or_plan_is_never_a_clear(self):
+        # The Detector catches these first; classify() is the second lock.
+        for edit in ({"account_fp": FP_B}, {"plan_type": "prolite"}):
+            with self.subTest(edit=edit):
+                before, after = clear_pair(**edit)
+                verdict = qp.classify(before, after, 1_000_000)
+                self.assertEqual(verdict["classification"], qp.CLASS_ACCOUNT_CHANGE)
+
+    def test_a_spend_still_wins_over_an_unread_identity(self):
+        # Step 4 before step 5: a positive own-cause needs no other check.
+        before, after = clear_pair(account_fp=None, credits_available=0, credit_ids=[])
+        self.assertEqual(qp.classify(before, after, 1_000_000)["classification"], qp.CLASS_SELF)
+
+    def test_an_account_without_a_bank_passes_the_credit_check_as_no_bank(self):
+        before, after = clear_pair(credits_available=None, credit_ids=None)
+        before = {**before, "credits_available": None, "credit_ids": None}
+        with mock.patch.object(qp, "CREDIT_BANK", False):
+            verdict = qp.classify(before, after, 1_000_000)
+        self.assertEqual(verdict["checks"]["credit"], "no_bank")
+        self.assertEqual(verdict["classification"], qp.CLASS_UNATTRIBUTED)
+        # The same unread field on an account that HAS a bank is unread.
+        self.assertEqual(qp.classify(before, after, 1_000_000)["checks"]["credit"], "unread")
+
+    def test_a_required_local_trace_holds_the_clear_until_it_is_read(self):
+        before, after = clear_pair()
+        with mock.patch.object(qp, "LOCAL_TRACE", True):
+            verdict = qp.classify(before, after, 1_000_000)
+        self.assertEqual(verdict["checks"]["local_trace"], "unread")
+        self.assertEqual(verdict["classification"], qp.CLASS_GLOBAL)
+        self.assertIn("reset-menu history", verdict["reason"])
+
+    def test_a_check_value_nobody_wrote_down_does_not_pass(self):
+        good = {"identity": "same", "plan": "same", "credit": "unspent",
+                "bracket": "tight", "local_trace": "none"}
+        self.assertEqual(qp.attribute_early_clear(good, 600)[0], qp.CLASS_UNATTRIBUTED)
+        for name in good:
+            with self.subTest(check=name):
+                for broken in ({**good, name: "maybe"}, {k: v for k, v in good.items() if k != name}):
+                    self.assertEqual(qp.attribute_early_clear(broken, 600)[0], qp.CLASS_GLOBAL)
+
+
+class CreditLookbackTest(unittest.TestCase):
+    """The bank can move a poll before the window does (2026-10-04)."""
+
+    # The real rows, as the sample log holds them: the count fell 2 -> 1 at
+    # 02:43:52 UTC, the window cleared at 02:44:52, so the adjacent pair read
+    # 1 -> 1. The 2 before it was last WRITTEN at 01:21:52, 82 minutes
+    # earlier, because the log only records a count when it moves.
+    OCT_04 = [
+        (1791076912, 100.0, 1791580921, 2),
+        (1791081832, 100.0, 1791580921, 1),
+        (1791081892, 0.0, 1791686634, 1),
+        (1791082192, 1.0, 1791686634, 1),
+    ]
+
+    def replay(self, rows, **edit):
+        d = qp.Detector()
+        events = []
+        for t, used, anchor, credits in rows:
+            events += d.observe(held(t, used, anchor, credits=credits, ids=None, **edit))
+        return [e for e in events if e.get("kind") == qp.EVENT_CLEAR]
+
+    def test_the_2026_10_04_shape_from_the_sample_log_is_self_applied(self):
+        clears = self.replay(self.OCT_04)
+        self.assertEqual(len(clears), 1)
+        self.assertEqual(clears[0]["classification"], qp.CLASS_SELF)
+        self.assertEqual(clears[0]["checks"]["credit"], "spent")
+        self.assertEqual((clears[0]["credits_before"], clears[0]["credits_after"]), (1, 1))
+        self.assertIn("read 2", clears[0]["reason"])
+
+    def test_the_same_shape_read_every_poll_is_self_applied(self):
+        live = [(1791081892 - 60 * n, 100.0, 1791580921, 2) for n in range(5, 1, -1)]
+        live += [(1791081832, 100.0, 1791580921, 1)] + self.OCT_04[2:]
+        clears = self.replay(live)
+        self.assertEqual(clears[0]["classification"], qp.CLASS_SELF)
+
+    def test_without_the_fall_the_same_rows_are_unattributed(self):
+        steady = [(t, used, anchor, 1) for t, used, anchor, _ in self.OCT_04]
+        self.assertEqual(self.replay(steady)[0]["classification"], qp.CLASS_UNATTRIBUTED)
+
+    def test_a_fall_older_than_the_lookback_does_not_explain_the_clear(self):
+        lookback = qp.CREDIT_LOOKBACK_POLLS * qp.POLL_SECONDS
+        rows = [
+            (0, 100.0, 1_000_000, 2),
+            (100, 100.0, 1_000_000, 1),
+            # The bank read 1 again inside the lookback, so the fall was over.
+            (500 - lookback, 100.0, 1_000_000, 1),
+            (500, 100.0, 1_000_000, 1),
+            (560, 0.0, 560 + WEEK_SECONDS, 1),
+            (620, 0.0, 620 + WEEK_SECONDS, 1),
+        ]
+        d = qp.Detector()
+        events = []
+        for t, used, anchor, credits in rows:
+            events += d.observe(held(t, used, anchor, credits=credits, ids=None))
+        self.assertEqual(events[0]["classification"], qp.CLASS_UNATTRIBUTED)
+
+    def test_a_credit_leaving_with_the_count_unchanged_is_self_applied(self):
+        # A redemption and a grant between two polls cancel in the count.
+        d = qp.Detector()
+        d.observe(held(0, 90, 1_000_000, ids=[CREDIT_1]))
+        d.observe(held(60, 0, 60 + WEEK_SECONDS, ids=[CREDIT_2]))
+        event = d.observe(held(120, 0, 120 + WEEK_SECONDS, ids=[CREDIT_2]))[0]
+        self.assertEqual(event["classification"], qp.CLASS_SELF)
+        self.assertIn("left the bank before its own expiry", event["reason"])
+
+    def test_a_credit_that_reached_its_expiry_is_not_a_spend(self):
+        expiring = {"id": "c00000000003", "expires_at": 30}
+        d = qp.Detector()
+        d.observe(held(0, 90, 1_000_000, ids=[CREDIT_1, expiring], credits=2))
+        d.observe(held(60, 0, 60 + WEEK_SECONDS, ids=[CREDIT_1], credits=1))
+        event = d.observe(held(120, 0, 120 + WEEK_SECONDS, ids=[CREDIT_1], credits=1))[0]
+        # The COUNT still fell across the pair, which is a spend on its own;
+        # what this pins is that the id test does not add a reason of its own.
+        self.assertNotIn("left the bank", event["reason"])
+        unexpired = qp.credit_left(
+            [{"t": 0, "count": 2, "ids": [CREDIT_1, expiring]}], 0, 60, 2, [CREDIT_1], 60
+        )
+        self.assertIsNone(unexpired)
+
+    def test_a_credit_leaving_before_a_future_expiry_is_a_spend(self):
+        later = {"id": "c00000000004", "expires_at": 2_000_000_000}
+        trail = [{"t": 0, "count": 1, "ids": [later]}]
+        self.assertIsNotNone(qp.credit_left(trail, 0, 60, 1, [], 60))
+        # ...and at or before the read that showed the clear, it expired.
+        at_hi = {**later, "expires_at": 60}
+        self.assertIsNone(qp.credit_left([{"t": 0, "count": 1, "ids": [at_hi]}], 0, 60, 1, [], 60))
+
+    def test_classify_reads_the_lookback_itself(self):
+        # The Detector's late refresh repeats this test a poll later, which
+        # would hide a classify() that skipped it; an anchor-jump clear is
+        # emitted at once and has only this one.
+        before, after = clear_pair()
+        trail = [{"t": -100, "count": 2, "ids": None}, {"t": 0, "count": 1, "ids": None}]
+        verdict = qp.classify(before, after, 1_000_000, credit_trail=trail)
+        self.assertEqual(verdict["classification"], qp.CLASS_SELF)
+        self.assertEqual(verdict["checks"]["credit"], "spent")
+
+    def test_an_anchor_jump_clear_is_never_unattributed(self):
+        # A clear recovered across a blind gap: emitted confirmed at once,
+        # with no later read to correct it. Two polls is still a gap.
+        d = qp.Detector()
+        d.observe(held(0, 80, 500_000))
+        events = d.observe(held(150, 30, 150 + WEEK_SECONDS))
+        self.assertEqual(events[0]["confirmed_by"], "anchor_jump")
+        self.assertEqual(events[0]["checks"]["bracket"], "wide")
+        self.assertEqual(events[0]["classification"], qp.CLASS_GLOBAL)
+        self.assertIn("blind gap", events[0]["reason"])
+
+    def test_an_unitemised_side_skips_only_the_id_test(self):
+        trail = [{"t": 0, "count": 1, "ids": [CREDIT_1]}]
+        self.assertIsNone(qp.credit_left(trail, 0, 60, 1, None, 60))
+        self.assertIsNotNone(qp.credit_left(trail, 0, 60, 1, [], 60))
+
+    def test_the_trail_stays_bounded(self):
+        d = qp.Detector()
+        for n in range(500):
+            d.observe(held(n * 60, 50, 1_000_000))
+        trail = d.slots["codex/10080"]["credit_trail"]
+        self.assertLessEqual(len(trail), qp.CREDIT_LOOKBACK_POLLS + 2)
+        self.assertEqual(trail[-1]["t"], 499 * 60)
+
+    def test_a_late_fall_downgrades_an_unattributed_clear(self):
+        d = qp.Detector()
+        d.observe(held(0, 90, 1_000_000))
+        d.observe(held(60, 0, 60 + WEEK_SECONDS))
+        self.assertEqual(
+            d.slots["codex/10080"]["pending"]["classification"], qp.CLASS_UNATTRIBUTED
+        )
+        event = d.observe(held(120, 0, 120 + WEEK_SECONDS, credits=0, ids=[]))[0]
+        self.assertEqual(event["classification"], qp.CLASS_SELF)
+        self.assertEqual(event["checks"]["credit"], "spent")
+        self.assertIn("after the clear", event["reason"])
+
+    def test_a_late_credit_id_leaving_downgrades_it_too(self):
+        d = qp.Detector()
+        d.observe(held(0, 90, 1_000_000, ids=[CREDIT_1]))
+        d.observe(held(60, 0, 60 + WEEK_SECONDS, ids=[CREDIT_1]))
+        event = d.observe(held(120, 0, 120 + WEEK_SECONDS, ids=[CREDIT_2]))[0]
+        self.assertEqual(event["classification"], qp.CLASS_SELF)
+
+    def test_a_late_reading_cannot_make_a_clear_unattributed(self):
+        # Unread at the clear, read later: still unread at the clear.
+        d = qp.Detector()
+        d.observe(held(0, 90, 1_000_000))
+        d.observe(held(60, 0, 60 + WEEK_SECONDS, account_fp=None))
+        event = d.observe(held(120, 0, 120 + WEEK_SECONDS))[0]
+        self.assertEqual(event["classification"], qp.CLASS_GLOBAL)
+
+
+class AccountChangeTest(unittest.TestCase):
+    """2026-09-19 and 09-20: an account switch is not a window clearing."""
+
+    # The real rows around the 09-19 switch. The pro row before it was last
+    # written four days earlier: an account at 100% writes nothing new.
+    SEP_19 = [
+        sample(1789455761, 100, 1789932817, credits=0, plan_type="pro"),
+        sample(1789789445, 0, 1790394246, credits=0, plan_type="prolite"),
+        sample(1789789505, 1, 1790394255, credits=0, plan_type="prolite"),
+    ]
+
+    def test_the_2026_09_19_plan_switch_is_an_account_change_not_a_clear(self):
+        d = qp.Detector()
+        events = feed(d, self.SEP_19)
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        change = events[0]
+        self.assertEqual(change["classification"], qp.CLASS_ACCOUNT_CHANGE)
+        self.assertEqual((change["plan_before"], change["plan_after"]), ("pro", "prolite"))
+        self.assertEqual((change["used_before"], change["used_after"]), (100.0, 0.0))
+        self.assertEqual(change["checks"], {"identity": "unread", "plan": "changed"})
+        self.assertIsNone(d.slots["codex/10080"].get("pending"))
+
+    def test_a_switch_re_baselines_the_slot(self):
+        d = qp.Detector()
+        d.observe(held(0, 100, 1_000_000, credits=2))
+        d.observe(held(60, 0, 1_000_000, credits=2))  # a pending clear
+        events = d.observe(held(120, 0, 120 + WEEK_SECONDS, credits=0, ids=[], account_fp=FP_B))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        state = d.slots["codex/10080"]
+        self.assertIsNone(state.get("pending"))
+        self.assertIsNone(state.get("active_anchor"))
+        # The new account's bank starts from its own first reading.
+        self.assertEqual(state["credit_trail"], [{"t": 120, "count": 0, "ids": []}])
+        self.assertEqual(state["identity"], {"account_fp": FP_B, "plan_type": "pro"})
+        # So its first clear is judged against its own bank, not the old 2.
+        d.observe(held(180, 80, 2_000_000, credits=0, ids=[], account_fp=FP_B))
+        d.observe(held(240, 0, 240 + WEEK_SECONDS, credits=0, ids=[], account_fp=FP_B))
+        clear = d.observe(held(300, 0, 300 + WEEK_SECONDS, credits=0, ids=[], account_fp=FP_B))[0]
+        self.assertEqual(clear["classification"], qp.CLASS_UNATTRIBUTED)
+
+    def test_a_switch_seen_through_an_unread_row_is_still_a_switch(self):
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000))
+        self.assertEqual(d.observe(held(60, 50, 1_000_000, account_fp=None)), [])
+        events = d.observe(held(120, 50, 1_000_000, account_fp=FP_B))
+        self.assertEqual(events[0]["kind"], qp.EVENT_ACCOUNT_CHANGE)
+        self.assertEqual(events[0]["account_fp_before"], FP_A)
+
+    def test_an_unreadable_identity_is_never_a_switch(self):
+        d = qp.Detector()
+        rows = [held(0, 50, 1_000_000), held(60, 50, 1_000_000, account_fp=None, plan=None),
+                held(120, 50, 1_000_000)]
+        self.assertEqual(feed(d, rows), [])
+
+    def test_one_switch_is_one_event_not_a_second_one_for_the_late_field(self):
+        # /login can land between the two files: plan read new, identity
+        # still unread. When the identity arrives it is the same switch.
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000))
+        first = d.observe(held(60, 50, 1_000_000, plan="team", account_fp=None))
+        second = d.observe(held(120, 50, 1_000_000, plan="team", account_fp=FP_B))
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
+    def test_a_slot_with_an_identity_but_no_last_row_starts_cleanly(self):
+        # A hand-edited or half-migrated cursor must not crash the poll loop.
+        d = qp.Detector({"slots": {"codex/10080": {"identity": {"account_fp": FP_A}}}})
+        self.assertEqual(d.observe(held(60, 50, 1_000_000, account_fp=FP_B)), [])
+
+    def test_the_remembered_identity_survives_a_restart(self):
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000))
+        restored = qp.Detector(json.loads(json.dumps(d.cursor())))
+        events = restored.observe(held(60, 50, 1_000_000, account_fp=FP_B))
+        self.assertEqual(events[0]["kind"], qp.EVENT_ACCOUNT_CHANGE)
+
+    def test_a_cursor_from_before_fingerprints_still_sees_a_plan_switch(self):
+        cursor = {"slots": {"codex/10080": {"last": sample(0, 100, 1_000_000)}}}
+        d = qp.Detector(json.loads(json.dumps(cursor)))
+        events = d.observe(sample(60, 0, 60 + WEEK_SECONDS, plan_type="prolite"))
+        self.assertEqual(events[0]["kind"], qp.EVENT_ACCOUNT_CHANGE)
+
+    def test_every_clear_carries_both_sides_and_its_checks(self):
+        d = qp.Detector()
+        d.observe(held(0, 90, 1_000_000))
+        d.observe(held(60, 0, 60 + WEEK_SECONDS))
+        event = d.observe(held(120, 0, 120 + WEEK_SECONDS))[0]
+        for field, value in {
+            "account": "a", "account_fp_before": FP_A, "account_fp_after": FP_A,
+            "plan_before": "pro", "plan_after": "pro", "window_family": "codex/10080",
+        }.items():
+            self.assertEqual(event[field], value, field)
+        self.assertEqual(
+            sorted(event["checks"]), ["bracket", "credit", "identity", "local_trace", "plan"]
+        )
+
+    def test_a_legacy_row_gives_a_clear_with_unread_identity(self):
+        d = qp.Detector()
+        feed(d, [sample(0, 90, 1_000_000), sample(60, 0, 60 + WEEK_SECONDS)])
+        event = d.observe(sample(120, 0, 120 + WEEK_SECONDS))[0]
+        self.assertIsNone(event["account"])
+        self.assertIsNone(event["account_fp_before"])
+        self.assertEqual(event["checks"]["identity"], "unread")
+        self.assertEqual(event["classification"], qp.CLASS_GLOBAL)
+
+    def test_the_window_family_names_a_second_account_s_window_alike(self):
+        self.assertEqual(
+            qp.window_family({"limit_id": "b:codex", "account": "b", "window_minutes": WEEK}),
+            "codex/10080",
+        )
+        self.assertEqual(
+            qp.window_family({"limit_id": "codex", "account": "a", "window_minutes": WEEK}),
+            "codex/10080",
+        )
+
+    def test_the_change_is_logged_and_never_published(self):
+        with temp_state(), captured_log() as out:
+            qp.append_jsonl(qp.EVENTS_FILE, [])
+            d = qp.Detector()
+            for row in self.SEP_19[:1]:
+                d.observe(row)
+            with mock.patch.object(qp, "normalise", return_value=self.SEP_19[1:2]), \
+                    mock.patch.object(qp, "read_rate_limits", return_value={}):
+                qp.poll_once(d, now=self.SEP_19[1]["t"])
+        self.assertIn("ACCOUNT CHANGED", out.getvalue())
+        row = observe({**feed(qp.Detector(), self.SEP_19)[0]})
+        self.assertEqual(row["verdict"], "account_change")
+        self.assertFalse(row["public"])
+
+
 # ─── Probe health file ───────────────────────────────────────────────────────
 
 
@@ -1366,12 +1754,30 @@ class ExportTest(unittest.TestCase):
                 clear_event("b", qp.CLASS_SELF),
                 clear_event("c", qp.CLASS_NATURAL),
                 clear_event("d", qp.CLASS_UNRESOLVED),
+                # Every own-cause excluded is still one account: private.
+                clear_event("e", qp.CLASS_UNATTRIBUTED),
+                {**clear_event("f", qp.CLASS_ACCOUNT_CHANGE), "kind": qp.EVENT_ACCOUNT_CHANGE},
             ]
         )
         self.assertEqual(
             {o["event_id"]: o["public"] for o in payload["observations"]},
-            {"a": False, "b": False, "c": True, "d": False},
+            {"a": False, "b": False, "c": True, "d": False, "e": False, "f": False},
         )
+
+    def test_one_login_seen_on_every_slot_is_one_observation(self):
+        change = {
+            "kind": qp.EVENT_ACCOUNT_CHANGE, "classification": qp.CLASS_ACCOUNT_CHANGE,
+            "account": "a", "t": 500, "seen_before": 440,
+        }
+        payload = self.export(
+            [{**change, "event_id": f"{slot}:account:500", "slot": slot}
+             for slot in ("codex/10080", "codex_secondary/300", "codex_secondary/10080")]
+        )
+        self.assertEqual(len(payload["observations"]), 1)
+        row = payload["observations"][0]
+        self.assertEqual(row["verdict"], "account_change")
+        self.assertEqual(row["observed_before"], "1970-01-01T00:07:20Z")
+        self.assertEqual(row["observed_after"], "1970-01-01T00:08:20Z")
 
     def test_a_clear_whose_credit_evidence_was_never_read_is_withheld(self):
         # global_candidate rests on one fact: the credit count did not fall.
@@ -1574,6 +1980,28 @@ LIVE_2026_08_30 = {
 }
 
 
+# The 2026-09-19 switch as the detector now records it: pro at 100% on
+# 2026-09-15 (the last row written), prolite at 0% when next read.
+SEP_19_CHANGE = {
+    "event_id": "codex/10080:account:1789789445",
+    "kind": qp.EVENT_ACCOUNT_CHANGE,
+    "classification": qp.CLASS_ACCOUNT_CHANGE,
+    "slot": "codex/10080",
+    "limit_id": "codex",
+    "window_minutes": WEEK,
+    "account": None,
+    "t": 1789789445,
+    "seen_before": 1789455761,
+    "account_fp_before": None,
+    "account_fp_after": None,
+    "plan_before": "pro",
+    "plan_after": "prolite",
+    "used_before": 100.0,
+    "used_after": 0.0,
+    "checks": {"identity": "unread", "plan": "changed"},
+}
+
+
 def observe(event, retracted=()):
     return qp.observation(event, set(retracted))
 
@@ -1591,6 +2019,13 @@ class VerdictTest(unittest.TestCase):
         self.assertEqual(self.verdict(qp.CLASS_NATURAL), "natural_expiry")
         self.assertEqual(self.verdict(qp.CLASS_SELF), "self_applied")
         self.assertEqual(self.verdict(qp.CLASS_UNRESOLVED), "unresolved")
+
+    def test_the_two_attribution_classes_have_private_verdicts_of_their_own(self):
+        self.assertEqual(self.verdict(qp.CLASS_UNATTRIBUTED), "unattributed")
+        self.assertEqual(self.verdict(qp.CLASS_ACCOUNT_CHANGE), "account_change")
+        for classification in (qp.CLASS_UNATTRIBUTED, qp.CLASS_ACCOUNT_CHANGE):
+            self.assertNotIn(classification, qp.PUBLIC_CLASSIFICATIONS)
+            self.assertFalse(observe({**clear_event(), "classification": classification})["public"])
 
     def test_a_credit_grant_and_a_limit_change_are_named_by_their_kind(self):
         grant = observe({"kind": qp.EVENT_CREDIT_GRANTED, "slot": "codex/10080", "t": 5})
@@ -1620,6 +2055,8 @@ class VerdictTest(unittest.TestCase):
             qp.CLASS_SELF,
             qp.CLASS_NATURAL,
             qp.CLASS_UNRESOLVED,
+            qp.CLASS_UNATTRIBUTED,
+            qp.CLASS_ACCOUNT_CHANGE,
         ):
             row = observe({**LIVE_2026_08_30, "classification": classification})
             said = f"{row['headline']} {row['evidence']}"
@@ -1732,8 +2169,12 @@ class SentenceTest(unittest.TestCase):
         # be constructible from any record this exporter can be handed.
         records = [
             {**LIVE_2026_08_30, "classification": name}
-            for name in (qp.CLASS_GLOBAL, qp.CLASS_SELF, qp.CLASS_NATURAL, qp.CLASS_UNRESOLVED)
+            for name in (
+                qp.CLASS_GLOBAL, qp.CLASS_SELF, qp.CLASS_NATURAL, qp.CLASS_UNRESOLVED,
+                qp.CLASS_UNATTRIBUTED, qp.CLASS_ACCOUNT_CHANGE,
+            )
         ] + [
+            {**SEP_19_CHANGE},
             {**LIVE_2026_08_30, "kind": qp.EVENT_RETRACTION, "reverted_at": 1788150000},
             {"kind": qp.EVENT_CREDIT_GRANTED, "slot": "codex/10080", "t": 5},
             {"kind": qp.EVENT_LIMIT_CHANGE, "slot": "codex/10080"},
@@ -1744,6 +2185,43 @@ class SentenceTest(unittest.TestCase):
             said = f"{row['headline']} {row['evidence']}".lower()
             self.assertNotIn("no reset", said)
             self.assertNotIn("did not reset", said)
+
+    def test_an_unattributed_clear_says_what_was_checked_and_no_more(self):
+        row = observe({**LIVE_2026_08_30, "classification": qp.CLASS_UNATTRIBUTED,
+                       "clear_bracket_lo": 1788143156})
+        self.assertEqual(
+            row["headline"],
+            "Our Codex weekly window cleared 5.9 days early, with no cause on our side "
+            "that this probe can see.",
+        )
+        self.assertIn("read on both sides of a 60-second bracket", row["evidence"])
+        self.assertIn("read 1 then 1 with no credit leaving the bank", row["evidence"])
+        self.assertIn("cannot say whose reset this was", row["evidence"])
+        self.assertFalse(row["public"])
+
+    def test_an_account_change_names_what_changed_and_no_fingerprint(self):
+        row = observe(SEP_19_CHANGE)
+        self.assertEqual(row["headline"], "The account behind our Codex weekly window changed.")
+        self.assertIn("The plan changed from pro to prolite between", row["evidence"])
+        self.assertIn("100% to 0%", row["evidence"])
+        both = observe({**SEP_19_CHANGE, "account_fp_before": FP_A, "account_fp_after": FP_B,
+                        "checks": {"identity": "changed", "plan": "changed"}})
+        self.assertIn("A different account on a different plan", both["evidence"])
+        for said in (row, both):
+            text = f"{said['headline']} {said['evidence']}"
+            self.assertNotIn(FP_A, text)
+            self.assertNotIn(FP_B, text)
+
+    def test_the_new_sentences_never_name_the_vendor(self):
+        # Neither verdict is evidence about the vendor in either direction.
+        for record in (
+            {**LIVE_2026_08_30, "classification": qp.CLASS_UNATTRIBUTED},
+            SEP_19_CHANGE,
+        ):
+            row = observe(record)
+            said = f"{row['headline']} {row['evidence']}".lower()
+            self.assertNotIn("vendor", said)
+            self.assertNotIn("provider", said)
 
     def test_an_empty_record_still_produces_two_sentences(self):
         # read_events() hands over whatever parsed as an object. A row with no
