@@ -133,6 +133,8 @@ FLOORS: dict[str, float] = {
     "claude_probe.py": 85.0,  # 88.0
     "discover_posts.py": 87.0,  # 90.3
     "fetch_anthropic.py": 94.0,  # 97.2
+    # Measured 2026-10-11 when the two-account rule landed in its own module.
+    "attribution.py": 97.0,  # 100.0
 }
 
 # A module absent from FLOORS is reported as UNGOVERNED with its real number and
