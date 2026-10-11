@@ -51,10 +51,12 @@ VENDOR_PRODUCT = {
     "google": "Gemini",
 }
 
-# The only vendor with a running ground-truth probe. The Claude probe is P2 and
-# Antigravity is P6; until they exist the email must say so rather than imply
-# that silence means nothing happened.
-PROBED_VENDORS = ("openai",)
+# Vendors with a running ground-truth probe: Codex, and Claude Code on two
+# accounts. Leaving Claude out marked every Claude mail's claim CLAIM_NONE, so
+# a reset our accounts later saw could never send its one confirmation.
+# Antigravity (P6) has no probe; until it does the email must say so rather
+# than imply that silence means nothing happened.
+PROBED_VENDORS = ("openai", "anthropic")
 
 
 def vendor_org(vendor: str) -> str:
@@ -376,9 +378,9 @@ def is_reviewed_announcer(handle: Any) -> bool:
 # never aimed at a plan we hold. Both scope strings below are real
 # claude-resets.com rows ("affected users", 2067802163498352929).
 
-# What the probed accounts actually hold. Two Max 20x accounts on one operator
-# machine for Claude; the Codex probe's account carries Pro.
-OUR_PLANS = frozenset({"max", "pro"})
+# What the probed accounts actually hold. Claude: account b on Max, and account
+# a on a Team org since its 2026-10-11 21:03 UTC login. Codex: Pro.
+OUR_PLANS = frozenset({"max", "pro", "team"})
 
 # Checked FIRST: a scope naming a fraction of the user base tells us nothing
 # about whether this account was in it, so it can never be read as "not seen".
@@ -395,9 +397,10 @@ UNIVERSAL_SCOPE_RE = re.compile(
     re.IGNORECASE,
 )
 # Plans nobody on this machine holds. Only consulted when no plan of ours is
-# named, so "all Plus, Pro and Business users" still covers us.
+# named, so "all Plus, Pro and Business users" still covers us. Team left this
+# list when account a moved to a Team org.
 OTHER_PLAN_RE = re.compile(
-    r"\b(?:plus|business|team|enterprise|free|edu|education|api)\b", re.IGNORECASE
+    r"\b(?:plus|business|enterprise|free|edu|education|api)\b", re.IGNORECASE
 )
 
 

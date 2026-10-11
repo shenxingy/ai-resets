@@ -233,7 +233,7 @@ class DescribeEventTests(unittest.TestCase):
         )
         self.assertEqual(reading["subject"], "Claude Code: usage limits reset")
         self.assertEqual(reading["org"], "Anthropic")
-        self.assertFalse(reading["probed"])  # no Claude probe exists yet
+        self.assertTrue(reading["probed"])  # two Claude accounts are probed
 
     def test_the_quoted_text_keeps_paragraphs_and_drops_the_shortener(self):
         reading = describe_event(
@@ -321,7 +321,7 @@ class ScopeTests(unittest.TestCase):
         # Without this the site says "announced, not observed on our accounts",
         # which reads as evidence the vendor over-claimed. It is not evidence of
         # anything: the reset was never aimed at a plan we hold.
-        for scope in ("Plus and Business", "Team", "seat-based Enterprise", "free tier"):
+        for scope in ("Plus and Business", "seat-based Enterprise", "free tier"):
             with self.subTest(scope=scope):
                 self.assertFalse(scope_covers_us(scope))
 
@@ -329,6 +329,14 @@ class ScopeTests(unittest.TestCase):
         for scope in ("about 3% of users", "affected users", "some users", "a subset of accounts"):
             with self.subTest(scope=scope):
                 self.assertFalse(scope_covers_us(scope))
+
+    def test_team_is_ours_since_account_a_moved_to_a_team_org(self):
+        # 2026-10-11 21:03 UTC: Claude account a logged in to a Team org. A
+        # Team-scoped reset is now one our probe could see, and calling it
+        # out of scope would excuse a claim we can check.
+        for scope in ("Team", "every Team seat", "Team and Enterprise"):
+            with self.subTest(scope=scope):
+                self.assertTrue(scope_covers_us(scope))
 
     def test_a_plan_of_ours_inside_a_longer_list_still_counts(self):
         self.assertTrue(scope_covers_us("all Plus, Pro and Business users"))
@@ -687,7 +695,10 @@ class DescribeEventFieldsTests(unittest.TestCase):
         self.assertEqual(reading["headline"], "Claude Code: usage limits were reset.")
         self.assertEqual(reading["kind"], KIND_RESET)
         self.assertEqual(reading["stage"], STAGE_RETROSPECTIVE)
-        self.assertFalse(reading["probed"])
+        # Claude Code is probed on two accounts, so a "not observed" in its
+        # mail is a claim a later observation can settle.
+        self.assertTrue(reading["probed"])
+        self.assertFalse(describe_event(announcement(vendor="google"))["probed"])
 
 
 
@@ -702,7 +713,7 @@ class ScopeOrderingTests(unittest.TestCase):
         # "all Plus users" is not about a Pro/Max account. Treating it as ours
         # produced "not observed on our accounts", which reads as evidence the
         # vendor over-claimed, from a post that never mentioned our tier.
-        for scope in ("all Plus users", "all Business users", "every Team seat"):
+        for scope in ("all Plus users", "all Business users", "every Enterprise seat"):
             with self.subTest(scope=scope):
                 self.assertFalse(scope_covers_us(scope))
 

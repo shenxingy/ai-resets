@@ -124,11 +124,13 @@ PROBE_SPECS = {
     ),
     "anthropic": ProbeSpec(
         vendor="anthropic",
-        # Two Max 20x accounts on one operator machine. Only the labels are ever
-        # written or shown; the organisations behind them are not ours to name.
+        # Two accounts on one operator machine, no longer on one plan: account
+        # a moved from Max to a Team org on 2026-10-11, so the phrase names no
+        # plan. Only the labels are ever written or shown; the organisations
+        # behind them are not ours to name.
         labels=("claude:a", "claude:b"),
         events_filename="claude_events.jsonl",
-        account_phrase="our Max 20x accounts",
+        account_phrase="our two Claude accounts",
         weekly_kinds=("weekly_all",),
         script="claude_probe.py",
     ),

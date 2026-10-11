@@ -375,7 +375,7 @@ class ClaudeObservationTests(StateDirCase):
         self.claude_events([self.CLEAR])
         result = self.line("anthropic", kind="reset", announced_at=self.POST)
         self.assertNotIn("verdict", result)
-        self.assertIn("Not observed on our Max 20x accounts", result["line"])
+        self.assertIn("Not observed on our two Claude accounts", result["line"])
         self.assertNotIn("48% to 0%", result["line"])
 
     def test_accounts_that_disagree_cannot_confirm_an_announcement(self):
@@ -384,12 +384,12 @@ class ClaudeObservationTests(StateDirCase):
         self.claude_events([{**self.CLEAR, "concordance": "accounts_disagree"}])
         result = self.line("anthropic", kind="reset", announced_at=self.POST)
         self.assertIsNone(result.get("verdict"))
-        self.assertIn("Not observed on our Max 20x accounts", result["line"])
+        self.assertIn("Not observed on our two Claude accounts", result["line"])
 
     def test_with_no_observation_it_says_it_looked_and_saw_nothing(self):
         self.claude_events([])
         result = self.line("anthropic", kind="reset", announced_at=self.POST)
-        self.assertIn("Not observed on our Max 20x accounts", result["line"])
+        self.assertIn("Not observed on our two Claude accounts", result["line"])
         self.assertIn("cannot rule a reset out", result["line"])
 
     def test_a_blind_half_of_a_two_account_probe_is_not_a_clean_look(self):
