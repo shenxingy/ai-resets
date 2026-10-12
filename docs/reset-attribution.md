@@ -238,6 +238,13 @@ A probe-first incident (no announcement) can only start from `vendor_reset`:
     when that is the probe-first incident, one owner alert when a post holds
     it (the post's own `reverted_on_our_account` raises the same alert, not a
     second one).
+  - **A first mail still waiting** (held by the flood cap, or failed and
+    waiting for its retry) is read against the feed again before it goes
+    out. It is cancelled when the feed marks the incident withdrawn or its
+    status no longer mails: the delivery stays `failed` with a `last_error`
+    starting `cancelled:` and the reason. A tick in which the incident is
+    missing from the feed only defers it, because an absence is not a
+    withdrawal.
 
 An `unattributed` clear with no witness never becomes public and never mails.
 Nothing alerts the owner for `observed_pending` or for an account change; both

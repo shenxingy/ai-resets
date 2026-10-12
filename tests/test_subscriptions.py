@@ -45,6 +45,7 @@ from scripts.subscriptions import (
     plan_adoptions,
     plan_discovery,
     run_notifier,
+    unsendable_reason,
     run_unit_alert,
     safe_http_url,
 )
@@ -554,6 +555,26 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(moved, (FLOOD_CAP + 1) * 2)
         self.assertEqual(len(self.store.pending_deliveries()), (FLOOD_CAP + 1) * 2)
         self.assertEqual(self.store.release_held(now=NOW), 0)
+
+    def test_a_cancelled_delivery_says_why_and_is_never_picked_again(self):
+        self.baseline()
+        self.store.discover_events([event("openai:probe-9", "openai")], now=NOW)
+        (first, second) = self.store.pending_deliveries()
+        self.assertTrue(self.store.cancel_delivery(
+            first["incident_key"], first["email"], "the pair was withdrawn", now=NOW))
+        self.assertEqual([row["email"] for row in self.store.pending_deliveries()],
+                         [second["email"]])
+        # A delivery already sent is the record of a mail a person received.
+        self.store.mark_sent(second["incident_key"], second["email"], "message-1")
+        self.assertFalse(self.store.cancel_delivery(
+            second["incident_key"], second["email"], "too late", now=NOW))
+        with self.store.connect() as conn:
+            rows = {row["email"]: (row["status"], row["last_error"], row["attempts"])
+                    for row in conn.execute("SELECT * FROM deliveries")}
+        self.assertEqual(rows[first["email"]],
+                         ("failed", "cancelled: the pair was withdrawn", 0))
+        self.assertEqual(rows[second["email"]], ("sent", None, 1))
+        self.assertEqual(self.store.pending_deliveries(), [])
 
     # ─── An incident that improves ───────────────────────────────────────────
 
@@ -1142,6 +1163,36 @@ class IncidentKeyTests(unittest.TestCase):
         )
         # A key we have never filed anything under is not a rename.
         self.assertEqual(plan_adoptions(stated, {}, set()), ())
+
+    def test_a_probe_first_mail_is_read_against_this_tick_s_feed_before_it_goes(self):
+        # Review case [11]: what decides whether a queued first mail of OUR
+        # OWN claim may still go out. Only a positive withdrawal or a status
+        # that no longer mails cancels it; an absence only defers it.
+        probe = {"origin": "probe", "observed_at": iso(NOW)}
+        post = {"announced_at": iso(NOW), "id": "1"}
+        observed = {"origin": "probe", "status": "observed"}
+        key = "openai:probe-weekly-1"
+        cases = {
+            "still observed": ({key: [observed, {"origin": "probe"}]}, None),
+            "withdrawn": ({key: [{"status": "retracted"}]}, "withdrawn"),
+            "withdrawn beside a stale row": ({key: [observed, {"status": "retracted"}]},
+                                             "withdrawn"),
+            "no longer mails": ({key: [{"origin": "probe", "status": "observed_single"}]},
+                                "observed_single"),
+            "rows without a status": ({key: [{"origin": "probe"}]}, "status none"),
+            "absent this tick": ({}, ""),
+        }
+        for name, (feed, expected) in cases.items():
+            with self.subTest(case=name):
+                reason = unsendable_reason(STAGE_NEW, key, probe, feed)
+                if expected in (None, ""):
+                    self.assertEqual(reason, expected)
+                else:
+                    self.assertIn(expected, reason)
+        # A follow-up, or the vendor's own announcement, is never ours to stop.
+        withdrawn = {key: [{"status": "retracted"}]}
+        self.assertIsNone(unsendable_reason(STAGE_RETRACTED, key, probe, withdrawn))
+        self.assertIsNone(unsendable_reason(STAGE_NEW, key, post, withdrawn))
 
     def test_a_correction_never_moves_an_incident(self):
         # Review case [09]: a withdrawn row reuses the event key of the pair

@@ -456,6 +456,118 @@ class CodexTwoAccountFlowTests(FlowCase):
         corrections = [m for m in self.mails() if "withdrawing" in m["subject"]]
         self.assertEqual(len(corrections), 2)
 
+    def probe_deliveries(self, key):
+        with self.store.connect() as conn:
+            return sorted(
+                (row["status"], row["last_error"] or "")
+                for row in conn.execute(
+                    "SELECT status, last_error FROM deliveries WHERE incident_key = ?", (key,)
+                )
+            )
+
+    def test_a_held_probe_first_mail_withdrawn_before_release_is_cancelled(self):
+        # Review case [11]: three unrelated posts and the pair arrive in one
+        # refresh, so the flood cap holds all four. Account b's clear is then
+        # withdrawn, and `notify --release` used to send the pair's "two of
+        # our accounts" mail anyway, with the correction a tick behind it.
+        self.posts["openai"] = [
+            trusted_post(str(2109132167112782200 + i), T0 - 10 * 3600 + i, vendor="openai",
+                         text="We have reset rate limits for everyone.", announcer="thsottiaux")
+            for i in range(3)
+        ]
+        events = self.codex_pair_polls()
+        key = probe_incident_key("openai", "weekly", T0)
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_notifier(self.config, self.app, now=T0 + 65 + HOLD)
+        self.assertIn("FLOOD HELD", out.getvalue())
+        self.assertEqual(self.mails(), [])
+
+        self.export("openai", self.retract(events, "b", T0 + 9000))
+        self.build(T0 + 9100)
+        self.notify(T0 + 9100)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_notifier(self.config, self.app, now=T0 + 9400, release=True)
+        self.assertIn(f"CANCELLED {key} n=2: the pair was withdrawn", out.getvalue())
+        self.notify(T0 + 9700)
+        subjects = [m["subject"] for m in self.mails()]
+        self.assertEqual(subjects, ["Codex: usage limits reset"] * 6)
+        self.assertEqual(
+            self.probe_deliveries(key),
+            [("failed", "cancelled: the pair was withdrawn before this mail went out "
+                        "(feed status retracted)")] * 2,
+        )
+
+    def test_a_failed_probe_first_mail_is_not_retried_after_the_withdrawal(self):
+        events = self.codex_pair_polls()
+        key = probe_incident_key("openai", "weekly", T0)
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD)
+        self.mailer.fail_next = 2
+        self.notify(T0 + 65 + HOLD)
+        self.assertEqual(self.mails(), [])
+        self.export("openai", self.retract(events, "b", T0 + 9000))
+        self.build(T0 + 9100)
+        preview = io.StringIO()
+        with contextlib.redirect_stdout(preview):
+            run_notifier(self.config, self.app, now=T0 + 9100, dry_run=True)
+        self.assertEqual(preview.getvalue().count("would cancel to "), 2)
+        self.assertEqual(self.probe_deliveries(key)[0][0], "failed")
+        self.assertFalse(self.probe_deliveries(key)[0][1].startswith("cancelled"))
+        self.notify(T0 + 9100)
+        self.notify(T0 + 9400)
+        self.assertEqual(self.mails(), [])
+        self.assertTrue(all(error.startswith("cancelled: ")
+                            for _, error in self.probe_deliveries(key)))
+
+    def test_a_withdrawal_the_feed_files_under_a_late_post_still_cancels(self):
+        # The pair's mail failed and waits for a retry; the pair is then
+        # withdrawn and a post arrives that the pair would have confirmed, so
+        # build files the correction under the post's key. The notifier must
+        # still read it as THIS incident's withdrawal (its own record of the
+        # pair row), not as an incident that has merely left the feed.
+        events = self.codex_pair_polls()
+        key = probe_incident_key("openai", "weekly", T0)
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD)
+        self.mailer.fail_next = 2
+        self.notify(T0 + 65 + HOLD)
+        self.export("openai", self.retract(events, "b", T0 + 9000))
+        self.posts["openai"] = [trusted_post("2109132167112782291", T0 + 1800, vendor="openai",
+                                             text="Reset all propagated.", announcer="thsottiaux")]
+        self.build(T0 + 9100)
+        self.notify(T0 + 9100)
+        self.assertTrue(all(error.startswith("cancelled: ")
+                            for _, error in self.probe_deliveries(key)))
+        self.assertNotIn("two of our accounts", " ".join(m["subject"] for m in self.mails()))
+
+    def test_a_feed_that_lost_the_pair_for_one_tick_defers_and_never_cancels(self):
+        # An absence is not a withdrawal: a build that could not read the
+        # export for one tick must not cancel a true mail for good.
+        events = self.codex_pair_polls()
+        key = probe_incident_key("openai", "weekly", T0)
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD)
+        self.mailer.fail_next = 2
+        self.notify(T0 + 65 + HOLD)
+        (self.observed / "openai.json").unlink()
+        self.build(T0 + 65 + HOLD + 300)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_notifier(self.config, self.app, now=T0 + 65 + HOLD + 300)
+        self.assertIn(f"DEFERRED {key}", out.getvalue())
+        self.assertEqual(self.mails(), [])
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD + 600)
+        self.notify(T0 + 65 + HOLD + 600)
+        self.assertEqual(
+            [m["subject"] for m in self.mails()],
+            ["Codex: weekly limits reset on two of our accounts — not announced yet"] * 2,
+        )
+
     def test_a_clear_withdrawn_before_the_other_account_cleared_is_nothing_public(self):
         # Privacy review, RetractedBeforeWitness, through the real detector
         # and exporter: account a clears and is taken back at T0+300, and
