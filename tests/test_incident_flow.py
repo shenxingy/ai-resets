@@ -466,6 +466,25 @@ class CodexTwoAccountFlowTests(FlowCase):
         corrections = [m for m in self.mails() if "withdrawing" in m["subject"]]
         self.assertEqual(len(corrections), 2)
 
+    def test_the_correction_names_the_account_whose_clear_reverted(self):
+        # Review case [06b]: account b's clear was withdrawn, and the
+        # correction quoted account a's clear, which stands, under "so the
+        # clear did not happen".
+        events = self.codex_pair_polls()
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD)
+        self.notify(T0 + 65 + HOLD)
+        self.export("openai", self.retract(events, "b", T0 + 9000))
+        self.build(T0 + 9100)
+        self.notify(T0 + 9100)
+        (correction, _) = [m for m in self.mails() if "withdrawing" in m["subject"]]
+        body = correction["text_body"]
+        self.assertIn("What we told you, and why it no longer stands: Account b's clear "
+                      "reverted: its window went back to the level it held before", body)
+        self.assertIn("Account a's clear still stands", body)
+        self.assertIn("our claim that two of our accounts saw a vendor reset is withdrawn", body)
+        self.assertNotIn("did not happen", body)
+
     def test_an_unverified_staff_post_beside_the_pair_is_not_called_no_announcement(self):
         # Review case [15]: a reviewed staff member posted 4 minutes after the
         # pair, but the post failed text verification, so the pair mails as

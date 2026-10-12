@@ -996,9 +996,10 @@ def probe_groups(vendor_key, clears, withdrawn=()):
     one incident per pair, however many accounts it spans. Withdrawn: the
     pairs groundtruth.withdrawn_pair_clears found a retraction has broken,
     whose readers are owed a correction. Each group is (incident_key, members
-    earliest first), the key built by incidents.probe_incident_key from the
-    earliest member's lower bracket, so a pair keeps one key from its first
-    build to its retraction.
+    earliest first), from groundtruth.probe_group_key: the key is built from
+    the earliest member's lower bracket, so a pair keeps one key from its
+    first build to its retraction, and the correction mail finds its group
+    under the same key.
     """
     # A withdrawn clear is never stamped vendor_reset (attribution excludes
     # it), so this is the live pairs and nothing else.
@@ -1011,22 +1012,10 @@ def probe_groups(vendor_key, clears, withdrawn=()):
         {key: clear.get("witness") for key, clear in by_key.items()}
     )
 
-    def keyed(members):
-        ordered = sorted(
-            members,
-            key=lambda clear: (clear.get("clear_bracket_lo") or clear["t"], clear["key"]),
-        )
-        first = ordered[0]
-        key = incidents.probe_incident_key(
-            vendor_key,
-            groundtruth.window_name(first.get("window_minutes")),
-            first.get("clear_bracket_lo"),
-        )
-        return key, ordered
-
     return (
-        [keyed([by_key[key] for key in members]) for members in live],
-        [keyed(members) for members in withdrawn if members],
+        [groundtruth.probe_group_key(vendor_key, [by_key[key] for key in members])
+         for members in live],
+        [groundtruth.probe_group_key(vendor_key, members) for members in withdrawn if members],
     )
 
 

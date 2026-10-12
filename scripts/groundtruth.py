@@ -344,6 +344,87 @@ def withdrawn_pair_clears(
     return groups
 
 
+def probe_group_key(
+    vendor: str, members: list[dict[str, Any]]
+) -> tuple[str, list[dict[str, Any]]]:
+    """(incident key, members earliest first) for one group of paired clears.
+
+    The key is incidents.probe_incident_key from the earliest member's lower
+    bracket, so a pair keeps one key from its first build to its retraction.
+    The fusion layer keys incidents with this, and the correction mail finds
+    its withdrawn group with it, so the two cannot disagree.
+    """
+    ordered = sorted(
+        members,
+        key=lambda clear: (clear.get("clear_bracket_lo") or clear["t"], clear["key"]),
+    )
+    first = ordered[0]
+    key = incidents.probe_incident_key(
+        vendor, window_name(first.get("window_minutes")), first.get("clear_bracket_lo")
+    )
+    return key, ordered
+
+
+def _accounts(clears: list[dict[str, Any]]) -> str:
+    """`account a`, `account a and account b`: labels only."""
+    names = [
+        f"account {clear['account']}"
+        if isinstance(clear.get("account"), str) and clear.get("account")
+        else "one of our accounts"
+        for clear in clears
+    ]
+    return " and ".join(names)
+
+
+WITHDRAWAL_CLOSE = (
+    "We are correcting our own observation here, not any vendor's announcement."
+)
+
+
+def withdrawal_line(
+    event: dict[str, Any],
+    *,
+    state_dir: Path | str = DEFAULT_STATE_DIR,
+) -> str:
+    """What a correction says it withdraws: whose clear reverted, and which claim falls.
+
+    Read from the raw log, never from the feed's retracted row, which carries
+    nothing of the clears. A half-withdrawn pair used to be corrected with
+    "so the clear did not happen" under a quote of the OTHER account's clear,
+    which still stands (review case [06b]). One account's clear standing alone
+    is not wrong; the two-account claim built on it is what is withdrawn.
+    """
+    vendor = str(event.get("vendor") or "")
+    key = str(event.get("incident_key") or "")
+    reverted = (
+        "went back to the level it held before, on the anchor it had before"
+    )
+    for members in withdrawn_pair_clears(state_dir, vendor=vendor):
+        group_key, ordered = probe_group_key(vendor, members)
+        if group_key != key:
+            continue
+        gone = [clear for clear in ordered if clear.get("retracted")]
+        standing = [clear for clear in ordered if not clear.get("retracted")]
+        if standing:
+            return (
+                f"{_capital(_accounts(gone))}'s clear reverted: its window "
+                f"{reverted}. {_capital(_accounts(standing))}'s clear still "
+                "stands, but one account alone cannot tell its holder's own reset "
+                "from the vendor's, so our claim that two of our accounts saw a "
+                f"vendor reset is withdrawn. {WITHDRAWAL_CLOSE}"
+            )
+        return (
+            f"The clears on {_accounts(gone)} {'both' if len(gone) == 2 else 'all'} "
+            f"reverted: each window {reverted}, "
+            "so none of those clears happened, and our claim that two of our "
+            f"accounts saw a vendor reset is withdrawn. {WITHDRAWAL_CLOSE}"
+        )
+    return (
+        f"A clear this observation rested on reverted: its window {reverted}. "
+        f"Without it, what we reported no longer stands. {WITHDRAWAL_CLOSE}"
+    )
+
+
 def read_event_log(path: Path) -> list[dict[str, Any]] | None:
     """Every JSON object in an append-only event log, or None when unreadable.
 
@@ -512,8 +593,12 @@ def _one_clear(clear: dict[str, Any]) -> str:
     return f"{who} at {when}{levels}"
 
 
+def _capital(clause: str) -> str:
+    return f"{clause[:1].upper()}{clause[1:]}"
+
+
 def _sentence(clause: str) -> str:
-    return f"{clause[:1].upper()}{clause[1:]}." if clause else ""
+    return f"{_capital(clause)}." if clause else ""
 
 
 def pair_summaries(clear: dict[str, Any]) -> list[dict[str, Any]]:

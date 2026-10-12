@@ -44,6 +44,7 @@ from scripts.groundtruth import (  # noqa: E402
     probe_first_line,
     probe_status,
     stale_age_line,
+    withdrawal_line,
 )
 from scripts.incidents import (  # noqa: E402
     ORIGIN_ANNOUNCEMENT,
@@ -1976,14 +1977,11 @@ class SubscriptionApp:
             # "What our own account shows" — next to a headline saying the
             # observation has been withdrawn. Nothing guarantees the two agree,
             # and the reader has no way to tell which one is being retracted.
-            # State the withdrawal itself and nothing else.
+            # State the withdrawal itself and nothing else: whose clear
+            # reverted, and that the two-account claim falls with it, read
+            # from the raw log (groundtruth.withdrawal_line).
             gt_label = "What we told you, and why it no longer stands"
-            gt_line = (
-                "Our probe recorded this clear and later withdrew it: the window "
-                "went back to the level it held before, on the anchor it had "
-                "before, so the clear did not happen. We are correcting our own "
-                "observation here, not the vendor's announcement."
-            )
+            gt_line = withdrawal_line(event, state_dir=self.config.state_dir)
         else:
             gt_label = "What our own account shows"
 

@@ -35,7 +35,9 @@ from scripts.groundtruth import (
     ground_truth_line,
     probe_first_line,
     probe_status,
+    withdrawal_line,
 )
+from scripts.incidents import probe_incident_key
 
 NOW = 1788573600
 
@@ -894,3 +896,43 @@ class StateDirTests(unittest.TestCase):
                     cwd=root, env={**clean, **env}, capture_output=True, text=True, check=True,
                 )
                 self.assertEqual(out.stdout.strip(), expected)
+
+
+class WithdrawalLineTests(StateDirCase):
+    """What a correction says it withdraws (review case [06b])."""
+
+    LO = NOW - 3 * 3600 - 60
+
+    def pair_with(self, *retracted):
+        a = attributed_clear("a", "aaaaaaaaaaaa", NOW - 3 * 3600, confirmed_at=NOW - 3 * 3600 + 120)
+        b = attributed_clear("b", "bbbbbbbbbbbb", NOW - 3 * 3600 + 60,
+                             confirmed_at=NOW - 3 * 3600 + 180)
+        clears = {"a": a, "b": b}
+        self.write_events([a, b] + [
+            {"kind": "retraction", "event_id": clears[label]["event_id"], "reverted_at": NOW - 600}
+            for label in retracted
+        ])
+        return {"vendor": "openai", "incident_key": probe_incident_key("openai", "weekly", self.LO)}
+
+    def test_half_a_pair_withdrawn_names_whose_clear_reverted(self):
+        line = withdrawal_line(self.pair_with("b"), state_dir=self.state)
+        self.assertTrue(line.startswith("Account b's clear reverted: its window went back"), line)
+        self.assertIn("Account a's clear still stands", line)
+        self.assertIn("our claim that two of our accounts saw a vendor reset is withdrawn", line)
+        # The clear that stands is never said not to have happened.
+        self.assertNotIn("did not happen", line)
+        self.assertNotIn("Account a's clear reverted", line)
+
+    def test_a_pair_withdrawn_whole_says_so(self):
+        line = withdrawal_line(self.pair_with("a", "b"), state_dir=self.state)
+        self.assertTrue(line.startswith("The clears on account a and account b both reverted"),
+                        line)
+        self.assertNotIn("still stands", line)
+
+    def test_a_group_it_cannot_find_claims_nothing_about_either_account(self):
+        event = self.pair_with("b")
+        for edit in ({"incident_key": "openai:probe-weekly-1"}, {"vendor": "nobody"}):
+            with self.subTest(edit=edit):
+                line = withdrawal_line({**event, **edit}, state_dir=self.state)
+                self.assertTrue(line.startswith("A clear this observation rested on reverted"))
+                self.assertNotIn("account", line.lower().replace("our own observation", ""))
