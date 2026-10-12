@@ -7,19 +7,24 @@ written. Prose that outlives its rule is how the contract came to call the
 beside it, and how the methodology came to say "two Codex accounts" before the
 second one was installed (backtest and privacy reviews). Both read as fact.
 
-Only tracked files are read: docs/reset-attribution.md, README.md and
-site/methodology.html. Nothing is written.
+Only tracked files are read: docs/reset-attribution.md, README.md,
+site/methodology.html and tests/fixtures/backtest-posts.json. Nothing is
+written.
 """
 
 from __future__ import annotations
 
+import contextlib
 import html
+import io
 import json
 import re
 import unittest
 from pathlib import Path
 
 from scripts import build, incidents
+from scripts import quota_probe as qp
+from tests.test_quota_probe import WEEK_SECONDS, feed, sample
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -182,6 +187,77 @@ class MethodologyTests(unittest.TestCase):
         self.assertTrue(line)
         self.assertTrue(line in self.text, f"the methodology does not quote {line!r}")
         self.assertTrue(line in flat(read("README.md")), f"README.md does not quote {line!r}")
+
+
+# ─── The retraction rule ────────────────────────────────────────────────────
+
+NUMBER_WORDS = {2: "two", 3: "three", 4: "four"}
+
+
+class RetractionWordingTests(unittest.TestCase):
+    def test_the_contract_names_every_field_a_retraction_adds(self):
+        # A confirmed clear, idle, then its pre-clear level on its pre-clear
+        # anchor read twice: the record that withdraws it.
+        old = 1_000_000
+        detector = qp.Detector()
+        with contextlib.redirect_stdout(io.StringIO()):  # REVERT READ held
+            feed(detector, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS)])
+            clear = detector.observe(sample(120, 2, 120 + WEEK_SECONDS))[0]
+            feed(detector, [sample(180, 80, old)])
+            retraction = detector.observe(sample(240, 80, old))[0]
+        self.assertEqual(retraction["kind"], qp.EVENT_RETRACTION)
+        contract = read("docs/reset-attribution.md")
+        added = sorted(set(retraction) - set(clear))
+        self.assertTrue(added)
+        for field in added:
+            with self.subTest(field=field):
+                self.assertIn(f"`{field}`", contract)
+
+    def test_the_documents_state_the_probe_s_own_read_count(self):
+        # One stale replica read withdrew nothing only once REVERT_POLLS
+        # existed; a document still describing a one-read retraction, or a
+        # constant changed under three documents, fails here.
+        reads = NUMBER_WORDS[qp.REVERT_POLLS]
+        for path, phrase, text in (
+            ("README.md", f"{reads} reads in a row", flat(read("README.md"))),
+            ("docs/reset-attribution.md", f"{reads} consecutive reads",
+             flat(read("docs/reset-attribution.md"))),
+            ("site/methodology.html", f"{reads} readings in a row",
+             visible_text(read("site/methodology.html"))),
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(phrase in text, f"{path} does not say {phrase!r}")
+
+
+# ─── What the bank sentence may claim ──────────────────────────────────────
+
+# A vendor_reset row as quota_probe exports it, with only the fields its
+# public sentences print.
+PAIR_ROW = {
+    "kind": "clear", "slot": "codex/10080", "window_minutes": 10080, "account": "a",
+    "used_before": 60.0, "used_after": 0.0,
+    "clear_bracket_lo": 1791699940, "clear_bracket_hi": 1791700000,
+    "prior_active_resets_at": 1791900000, "early_by_seconds": 200000,
+    "credits_before": 1, "credits_after": 1,
+    "checks": {"identity": "same", "plan": "same", "credit": "unspent",
+               "bracket": "tight", "local_trace": "n_a"},
+    "witness": "b:codex/10080:1791700100", "witness_account": "b",
+}
+
+
+class BankWordingTests(unittest.TestCase):
+    def test_the_count_readme_quotes_is_what_a_count_only_row_publishes(self):
+        # An unchanged COUNT cannot show that no credit left (privacy
+        # review): README says so, and quotes the sentence the row prints.
+        _, counted = qp.observation_sentences({**PAIR_ROW, "credit_itemised": False},
+                                              "vendor_reset")
+        _, itemised = qp.observation_sentences({**PAIR_ROW, "credit_itemised": True},
+                                               "vendor_reset")
+        quote = "the banked credit count read 1 then 1"
+        self.assertIn(quote, counted)
+        self.assertNotIn("no credit leaving", counted)
+        self.assertIn(f"{quote} with no credit leaving the bank before its expiry", itemised)
+        self.assertTrue(quote in flat(read("README.md")), f"README.md does not quote {quote!r}")
 
 
 if __name__ == "__main__":

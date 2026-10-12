@@ -66,11 +66,14 @@ Three measured facts drive the detection logic:
    grants, spending and expiry can overlap between polls. Claude's personal
    limit resets can restore weekly limits too, and its usage response does not
    expose a redemption ledger. One account can only rule out the own-causes it
-   can see, hence the [second witness](#what-the-verdicts-mean).
+   can see, hence the [second witness](#what-the-verdicts-mean). A row says
+   only "the banked credit count read 1 then 1" unless each credit was listed.
 
-A clear must persist across two polls before it is trusted: on one occasion a
-weekly window went 91% to 0% in 3.7 s, held for 12 h 41 m, and then reverted
-to 92%.
+A clear must persist across two polls before it is trusted, and stays under
+watch while the window idles: a weekly window once went 91% to 0% in 3.7 s,
+held 12 h 41 m, then reverted to 92% on its original anchor. Withdrawing it
+takes two reads in a row: on 2026-09-09 the vendor served a pre-reset level
+for one read, which alone, in an idle window, would undo a real reset.
 
 **Known limit: a handful of accounts on two vendors.** This times when a reset
 reached *these* accounts, which is not the same as when a fleet-wide rollout
@@ -103,14 +106,17 @@ only with a **second witness**:
 | `unresolved` | Cleared early but a check could not run, or no expiry anchor on record | **no** |
 
 A `vendor_reset` pair with no post becomes one incident, mailed once after a
-120-minute hold. `scripts/attribution.py` decides it for the site, the
-announcement annotations and the email alike. Legacy `global_candidate`
-records read as `unresolved` and carry no account fingerprint, so they never
-pair. A banked-credit grant is a separate event from a clear, and timing one
-near an announcement proves nothing about anyone's quota. Announcements stay
-visible as their sources' claims, with the scope those sources state. Private
-samples and event logs are kept for review. The full rule and every historical
-clear, attributed:
+120-minute hold. If one half later reverts, the incident is withdrawn: a first
+mail still waiting is cancelled, subscribers already mailed get a correction
+(unless they turned that follow-up off), and the feed keeps only a marker (its
+key, its id and `status: retracted`). `scripts/attribution.py` decides it for
+the site, the announcement annotations and the email alike. Legacy
+`global_candidate` records read as `unresolved` and carry no account
+fingerprint, so they never pair. A banked-credit grant is a separate event
+from a clear, and timing one near an announcement proves nothing about
+anyone's quota. Announcements stay visible as their sources' claims, with the
+scope those sources state. Private samples and event logs are kept for review.
+The full rule and every historical clear, attributed:
 [docs/reset-attribution.md](docs/reset-attribution.md).
 
 Official contracts: [OpenAI reset Bank and redemption](https://learn.chatgpt.com/docs/app-server)

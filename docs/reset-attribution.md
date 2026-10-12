@@ -242,9 +242,13 @@ A probe-first incident (no announcement) can only start from `vendor_reset`:
 - **A retraction:** a pair that stood and that a retraction then breaks
   becomes one `retracted` row, so the people who were mailed get the
   correction. A probe retracts a clear only when two consecutive reads show it
-  reverted (`REVERT_POLLS`): on 2026-09-09 the vendor served account a's
-  pre-reset level on its pre-reset anchor for one poll, and any other read in
-  between restarts the count.
+  reverted (`REVERT_POLLS`), and any other read in between restarts the
+  count. On 2026-09-09 at 18:13:40 UTC the vendor served account a's
+  pre-reset level on its pre-reset anchor for exactly one read. What two
+  reads cannot absorb: the same thing at 16:56:40 has no row for 44 minutes
+  after it, because the sample log writes a row only when a value moves, so
+  it was one stale read and a blind gap or 44 stale reads in a row, and the
+  log cannot say which.
   - **It must have stood:** every member confirmed, and each retracted
     member's `reverted_at` strictly later than the last member's
     `confirmed_at`. A clear taken back before its partner was confirmed never
@@ -301,7 +305,12 @@ On every clear event: `account`, `account_fp_before`, `account_fp_after`,
 `checks = {identity, plan, credit, bracket, local_trace}` with values
 `same/changed/unread`, `same/changed/unread`,
 `unspent/spent/unread/no_bank`, `tight/wide` and `none/found/unread/n_a`.
-Credit-grant events carry `account` too.
+Credit-grant events carry `account` too. A retraction is its clear's record
+plus `reverted_at`, `used_at_revert` and `resets_at_at_revert` (the first of
+the reads that showed the revert: when usage came back, the level and the
+anchor), `revert_confirmed_at` (the read that completed the count) and
+`revert_reads`. Until the count completes, the pending clear holds that first
+read as `revert_read`, and the probe logs `REVERT READ held`.
 
 A clear also carries `credit_itemised`: `true` only when both sides listed
 their credits (`credit_ids` a list, `[]` included). It sets how much any
@@ -394,6 +403,11 @@ marked.
     the probe is blind.
 11. **Only each vendor's primary weekly window pairs.** The draft paired any
     window family. See "Two accounts" above.
+12. **Settled after review; the draft did not address them.** A retraction
+    takes two consecutive reads. A withdrawn pair publishes only its key, id
+    and status, and only if it stood. The bank is described only as far as it
+    was read (`credit_itemised`). Published ids hide a model's name. The page
+    draws the seen line. Each is described where it applies above.
 
 ## Not in scope
 
