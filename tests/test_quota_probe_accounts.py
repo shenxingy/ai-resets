@@ -583,6 +583,15 @@ class CoverageTest(unittest.TestCase):
                        samples=self.samples(b_peak=60.0), cursor=self.cursor("pro"))["probe"]
         self.assertEqual(probe["coverage"], "Two Codex Pro accounts, weekly window only.")
 
+    def test_a_single_reading_is_not_all_of_one(self):
+        # Right after b is added its idle windows have written one row each.
+        probe = export({"codex": block("codex"), "codex:b": block("codex:b")},
+                       samples=self.samples()[:3], cursor=self.cursor())["probe"]
+        self.assertIn("Account b's weekly window has never read above 3% on the one "
+                      f"reading taken since {qp.format_epoch_pacific(self.FIRST_B)}",
+                      probe["coverage"])
+        self.assertEqual(qp.readings_taken(0, " since then"), " since then")
+
     def test_an_account_b_with_no_samples_says_so(self):
         probe = export({"codex": block("codex"), "codex:b": block("codex:b")},
                        samples=self.samples()[:2], cursor=self.cursor())["probe"]

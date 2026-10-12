@@ -2423,7 +2423,7 @@ def coverage_sentence(
         samples = sum(by_window_samples.get(name, 0) for name in quiet)
         # "since <date>" alone would imply continuous watching. An idle window
         # writes no sample at all, so state how many readings the claim rests on.
-        seen_on = f" on all {samples} readings taken{since}" if samples else since
+        seen_on = readings_taken(samples, since)
         if peak <= 0:
             tail = f"The {joined} {noun} {verb} read 0%{seen_on}"
         else:
@@ -2435,6 +2435,15 @@ def coverage_sentence(
     if len(plans) > 1:
         parts.extend(account_gaps(plans, active, by_account))
     return " ".join(parts)
+
+
+def readings_taken(samples: int, since: str) -> str:
+    """` on all 59 readings taken since …`; one reading is not "all 1"."""
+    if not samples:
+        return since
+    if samples == 1:
+        return f" on the one reading taken{since}"
+    return f" on all {samples} readings taken{since}"
 
 
 def account_gaps(
@@ -2467,7 +2476,7 @@ def account_gaps(
             if peak >= CLEAR_DROP_MIN:
                 continue
             since = f" since {format_epoch_pacific(first)}" if first else ""
-            read = f" on all {samples} readings taken{since}" if samples else since
+            read = readings_taken(samples, since)
             gaps.append(
                 f"Account {account}'s {name} window has never read above {peak:g}%{read}, "
                 f"under the {CLEAR_DROP_MIN:g}-point drop a clear needs, so nothing can be "
