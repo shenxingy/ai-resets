@@ -7,11 +7,15 @@ personal limit reset redeemed on the web. Our probes can positively identify
 every OTHER own-cause (spent banked credit, account switch, plan change, the
 Claude Code reset menu opened on this machine). They call a reset the vendor's
 only when a second, independent witness agrees: another of our accounts
-clearing the same window within the hour, or a trusted vendor post saying the
-reset already happened, posted between one hour before and three hours after
-the clear. Every historical clear since 2026-08-30 lands on its true cause
-under this rule once the signals it needs are recorded (table below);
-historical rows lack them, so the live log keeps those rows `unresolved`.
+clearing the same primary weekly window within the hour, or a trusted vendor
+post saying the reset already happened, posted between one hour before and
+three hours after the clear. Once the signals the rule needs are recorded,
+every historical clear since 2026-08-30 but one lands on its true cause, and
+none lands on a wrong one (table below). The exception is the 2026-09-08
+vendor reset: the only post near it is a tracker's paraphrase that was never
+verified against the original, so the rule leaves that clear a private
+`unattributed` that confirms nothing. Historical rows lack those signals, so
+the live log keeps them `unresolved`.
 
 Written 2026-10-11 after the owner's decisions on the four open items in
 `docs/robustness-plan.md` "Owner decisions". The owner's words, verbatim:
@@ -61,21 +65,25 @@ schema (`codex app-server generate-json-schema`), and Claude Code's bundled
 The cause column was established on 2026-10-11 from the probe logs, Codex
 session rollouts of both Codex homes, `codex-login.log`, shell history, Claude
 profile histories and `.claude.json` backups. "Rule" is what the rule below
-assigns when the signals it needs are recorded.
+assigns when the signals it needs are recorded. `confirmed` means one
+account's `unattributed` clear confirms the trusted post beside it; the clear
+itself stays private. `tests/test_docs.py` re-derives every vendor row's Rule
+from the post beside it (`tests/fixtures/backtest-posts.json`), so this column
+cannot drift from the code.
 
 | When (UTC) | Account | Cause | Deciding evidence | Rule |
 |---|---|---|---|---|
-| 08-31 02:26 | Codex Pro | vendor | bank 1→1; staff post 3 min later | unattributed + post → confirmed |
+| 08-31 02:26 | Codex Pro | vendor | bank 1→1; staff post 3 min later | confirmed |
 | 09-02 04:10 | Codex Pro | own banked credit | bank 1→0 | self_applied |
 | 09-05 05:32 | Codex Pro | own banked credit | bank 2→1 | self_applied |
-| 09-08 01:22 | Codex Pro | vendor | bank 1→1; post 34 min later | confirmed |
+| 09-08 01:22 | Codex Pro | vendor | bank 1→1; a tracker's unverified paraphrase of a post 34 min later | unattributed (private: no trusted post) |
 | 09-12 08:09 | Codex Pro | vendor | bank 1→1; post in the same minute | confirmed |
 | 09-13 19:32 | Codex Pro | own banked credit | bank 1→0 | self_applied |
 | 09-19 03:44 | Codex | account switch | plan pro → prolite | account_change |
 | 09-20 19:47 | Codex | account switch | plan prolite → pro, `codex login` 14 s earlier | account_change |
 | 09-26 16:59 | Codex Pro | vendor | bank 1→1; post 79 min later | confirmed |
 | 09-30 18:18 | Claude b | own limit reset | `/rate-limit-options` 30 min earlier; account a did not clear | self_applied |
-| 10-02 21:13 | Codex Pro | vendor | bank 2→2; Pro Lite account also cleared | vendor_reset |
+| 10-02 21:13 | Codex Pro | vendor | bank 2→2; Pro Lite account also cleared; post 5 min later | vendor_reset |
 | 10-04 02:44 | Codex Pro | own banked credit | bank 2→1 ONE POLL BEFORE the clear | self_applied (needs the lookback) |
 | 10-05 00:46 | Codex Pro | own banked credit | bank 1→0 | self_applied |
 | 10-07 03:28 | Codex Pro | vendor | bank 0→0; post 6 min later | confirmed |
@@ -87,13 +95,15 @@ Historical rows carry no account fingerprint, so the probe itself cannot
 re-derive "unattributed" for them: they stay `unresolved` forever. The rule
 applies to clears recorded after this change ships.
 
-Replayed through the implementation on 2026-10-11, from copies of the live
-sample logs:
+Replayed through the implementation on 2026-10-11, and again after the
+review fixes the same evening, from copies of the live sample logs:
 
 - **As recorded.** The account switches (09-19, 09-20, Claude a 10-11) come
   out `account_change` and the own resets come out `self_applied`, including
   10-04 through the lookback and Claude b 09-30 through its history. Every
-  vendor row stays `unresolved`.
+  vendor row stays `unresolved`. The 2026-09-09 flap, when the vendor served
+  account a's pre-reset level on its pre-reset anchor between reads on the new
+  one, is no clear and no retraction.
 - **With a fingerprint per plan injected, and one reading per minute
   restored.** The sample log writes a row only when a value moves, so its
   brackets are wider than the live ones. All seven Codex vendor rows become
@@ -104,9 +114,16 @@ sample logs:
   Pro Lite account's own session rollouts, which place its clears only
   within hours (10-02 between 18:54 and 21:48 UTC; 10-11 between 02:09 and
   04:05 UTC). That a live probe would have paired them within 60 minutes is
-  an inference. On 10-11 the tracked post (04:01:09 UTC, "Put the reset in
-  the bag. All propagated.") also falls inside the single-account window, so
-  that clear would be `confirmed` either way.
+  an inference. A trusted post also falls inside the single-account window on
+  both days (10-02 21:18:48 UTC, "Reset all propagated. Enjoy."; 10-11
+  04:01:09 UTC, "Put the reset in the bag. All propagated."), so each clear
+  would be `confirmed` either way.
+- **Why 09-08 confirms nothing.** The only post near it is a tracker's row
+  whose text was never verified against the original post
+  (`text_verified: false`, `text_source: tracker`).
+  `incidents.is_trusted_announcement()` refuses it, and one account's clear
+  confirms only a trusted post. The clear stays a private `unattributed`, and
+  becomes `confirmed` only if a verified copy of that post is recorded.
 
 ## The rule
 
