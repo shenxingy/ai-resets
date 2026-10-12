@@ -175,14 +175,16 @@ CONFIRM_POLLS = 2
 # the anchor in force before its 09-08 clear, for ONE poll at 18:13:40 UTC and
 # was back on the post-clear anchor at 18:14:40. That is the exact revert
 # signature, so had the cleared window still been idle, one such read would
-# have retracted a real reset, broken its pair and mailed a correction for it.
-# The 2026-08-03 revert held for good, so a second read costs it one poll. Any
-# read in between that is not a revert starts the count again. What two reads
-# cannot absorb: earlier that day the log holds 92% at 16:56:40 and nothing
-# until 17:40:40, and it cannot say whether that was one read and a blind gap
-# or 44 stale reads in a row. Replayed from the sample log, which writes a row
-# only when a value moves, a held revert is one row until usage moves again,
-# so a replay retracts at the next row that moved.
+# have retracted a real reset (account b was not probed then; today a paired
+# reset would also lose its pair, and its subscribers get a correction). A
+# revert that is the window's real state reads the same on the next poll too,
+# so a second read costs the 2026-08-03 shape one poll. Any read in between
+# that is not a revert starts the count again. What two reads cannot absorb:
+# earlier that day the log holds 92% at 16:56:40 and nothing until 17:40:40,
+# and it cannot say whether that was one read and a blind gap or 44 stale
+# reads in a row. Replayed from the sample log, which writes a row only when
+# a value moves, a held revert is one row until usage moves again, so a
+# replay retracts at the next row that moved.
 REVERT_POLLS = 2
 
 # The server rounds resets_at; the same frozen anchor has been read as
