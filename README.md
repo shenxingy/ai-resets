@@ -123,6 +123,8 @@ Official contracts: [OpenAI reset Bank and redemption](https://learn.chatgpt.com
 and [Claude personal limit resets](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset).
 Neither probe redeems a credit while monitoring.
 
+Planned follow-up: [clarify reset evidence states and probe health badges](docs/reset-evidence-plan.md).
+
 ## Layout
 
 ```
