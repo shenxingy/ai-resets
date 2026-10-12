@@ -10,7 +10,7 @@ import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from scripts import build
+from scripts import build, incidents
 from scripts.build import (
     OBSERVED_CONFIRMED,
     OBSERVED_NOT_SEEN,
@@ -750,7 +750,8 @@ class FusionTests(unittest.TestCase):
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
         return vendors[key]["events"]
 
-    def clear(self, *, t, classification="global_candidate", event_id=None, confirmed=True):
+    def clear(self, *, t, classification="global_candidate", event_id=None, confirmed=True,
+              **edit):
         return {
             "event_id": event_id or f"codex/10080:{t}",
             "kind": "clear",
@@ -760,6 +761,7 @@ class FusionTests(unittest.TestCase):
             "used_after": 0.0,
             "classification": classification,
             "confirmed": confirmed,
+            **edit,
         }
 
     def test_a_fresh_trusted_announcement_is_announced_with_its_key(self):
@@ -832,7 +834,10 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(events["status"], "announced")
 
     def test_a_retracted_clear_under_an_announcement_is_reverted(self):
-        clear = self.clear(t=FUSION_NOW - 3500)
+        # A clear that, while it stood, confirmed this post: one account's
+        # unattributed clear 100 s after a trusted retrospective post.
+        clear = self.clear(t=FUSION_NOW - 3500, classification="unattributed",
+                           window_family="codex/10080")
         self.write_probe_log(
             [
                 clear,
@@ -845,6 +850,34 @@ class FusionTests(unittest.TestCase):
         )
         (events,) = self.fuse([trusted_event("100", announced_at=FUSION_NOW - 3600)])
         self.assertEqual(events["status"], "reverted_on_our_account")
+
+    def test_only_a_withdrawal_that_would_have_confirmed_the_post_reverts_it(self):
+        # Review case [20]'s rule: a withdrawn clear speaks against a post only
+        # if, while it stood, it would have confirmed that post, on a window
+        # that can pair. Each of these was withdrawn near a trusted post and
+        # never could have confirmed it, so the post stays `announced`.
+        for name, edit in {
+            "a 5-hour session clear": {"classification": "session_only",
+                                       "window_family": "session"},
+            "an unresolved clear": {"classification": "global_candidate",
+                                    "window_family": "codex/10080"},
+            "a natural expiry": {"classification": "natural_expiry",
+                                 "window_family": "codex/10080"},
+            "a model-scoped window": {"classification": "unattributed",
+                                      "window_family": "weekly_scoped:opus"},
+            "no window on record": {"classification": "unattributed"},
+            "a malformed window": {"classification": "unattributed",
+                                   "window_family": ["codex/10080"]},
+            "outside the single-account window": {"classification": "unattributed",
+                                                  "window_family": "codex/10080",
+                                                  "detected_at": FUSION_NOW - 3600 + 3601},
+        }.items():
+            with self.subTest(case=name):
+                t = edit.pop("detected_at", FUSION_NOW - 3500)
+                clear = self.clear(t=t, **edit)
+                self.write_probe_log([clear, {"kind": "retraction", "event_id": clear["event_id"]}])
+                (events,) = self.fuse([trusted_event("100", announced_at=FUSION_NOW - 3600)])
+                self.assertEqual(events["status"], "announced")
 
     def test_an_unverified_row_is_a_candidate_and_never_mails(self):
         (events,) = self.fuse(
@@ -1099,6 +1132,74 @@ class ProbeFirstFusionTests(unittest.TestCase):
         post = trusted_event("100", announced_at=FUSION_NOW - 120)
         vendor = self.fuse_pair(clears + [expiry], [post])
         self.assertEqual(vendor["events"][0]["status"], "confirmed")
+
+    def test_the_confirmation_rule_not_the_verdict_table_picks_the_match(self):
+        # Mutation review: a lone unattributed clear 2 h AFTER a trusted post
+        # is outside the single-account window ([-3 h, +1 h]), so it confirms
+        # nothing, however much nearer it sits than the pair 3 h after. A
+        # match by verdict alone took it, and the post fell to `announced`.
+        post_at = FUSION_NOW - 4 * 3600
+        post = trusted_event("100", announced_at=post_at)
+        lone = {"key": "u", "t": post_at + 2 * 3600, "verdict": "unattributed", "retracted": False}
+        pair = {"key": "v", "t": post_at + 3 * 3600, "verdict": "vendor_reset", "retracted": False,
+                "witness": "w"}
+        match = build.match_observation(post, [lone, pair])
+        self.assertEqual(match["key"], "v")
+        self.assertEqual(incidents.derive_status(post, match, None, now=fusion_iso(FUSION_NOW)),
+                         "confirmed")
+        # The same through fusion: the pair confirms the post and is its own.
+        clears = self.pair(post_at + 3 * 3600)
+        single = dict(clears[0], event_id="c:codex/10080:y", account="c",
+                      account_fp_before="cccccccccccc", account_fp_after="cccccccccccc",
+                      detected_at=post_at + 2 * 3600, clear_bracket_hi=post_at + 2 * 3600,
+                      clear_bracket_lo=post_at + 2 * 3600 - 60)
+        vendor = self.fuse_pair(clears + [single], [post])
+        self.assertEqual(vendor["events"][0]["status"], "confirmed")
+        self.assertIn("merged_from", vendor["events"][0])
+
+    def test_standing_evidence_outranks_a_nearer_withdrawal(self):
+        # Account a cleared, reverted, then cleared again beside account b.
+        # The withdrawn first clear sits nearest the post; the pair still
+        # stands, so the post is confirmed and takes the pair over, instead of
+        # being called reverted while the pair mails "not announced yet".
+        post_at = FUSION_NOW - 3 * 3600
+        a, b = self.pair(post_at + 1800)
+        first = dict(a, event_id="a:codex/10080:first", detected_at=post_at + 60,
+                     clear_bracket_lo=post_at, clear_bracket_hi=post_at + 60,
+                     confirmed_at=post_at + 180)
+        withdrawn = {"kind": "retraction", "event_id": first["event_id"],
+                     "reverted_at": post_at + 900}
+        vendor = self.fuse_pair([first, withdrawn, a, b], [trusted_event("100", announced_at=post_at)])
+        (event,) = vendor["events"]
+        self.assertEqual(event["status"], "confirmed")
+        self.assertIn("merged_from", event)
+        self.assertFalse(any("status" in row for row in vendor["observations"]))
+
+    def test_a_withdrawn_pair_speaks_as_the_pair_it_was(self):
+        # Two hours after the post is too late for one account's clear to
+        # confirm it, but a two-account pair has the full +-6 h. When one half
+        # of a pair that stood is withdrawn, the post is reverted on our
+        # account: the pair confirmed it, and the pair is gone.
+        post_at = FUSION_NOW - 5 * 3600
+        a, b = self.pair(post_at + 2 * 3600)
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"],
+                     "reverted_at": post_at + 3 * 3600}
+        vendor = self.fuse_pair([a, b, withdrawn], [trusted_event("100", announced_at=post_at)])
+        self.assertEqual(vendor["events"][0]["status"], "reverted_on_our_account")
+
+    def test_only_a_post_the_pair_confirms_takes_it_over(self):
+        # Review case [20]: a post that ends up anything but `confirmed` must
+        # leave the pair its own incident; claimed, the pair lost its status
+        # row and nobody was mailed at all. A post discovered two days late
+        # is `historical` (never mailed), whatever the pair says.
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        late = trusted_event("100", announced_at=FUSION_NOW - 3 * 3600 + 300,
+                             first_seen_at=fusion_iso(FUSION_NOW - 3 * 3600 + 300 + 49 * 3600))
+        vendor = self.fuse_pair(clears, [late])
+        self.assertEqual(vendor["events"][0]["status"], "historical")
+        self.assertNotIn("merged_from", vendor["events"][0])
+        self.assertEqual([r.get("status") for r in vendor["observations"] if "status" in r],
+                         ["observed"])
 
     def test_a_three_account_cascade_is_one_incident(self):
         a, b = self.pair(FUSION_NOW - 3 * 3600)

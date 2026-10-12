@@ -434,6 +434,58 @@ class CodexTwoAccountFlowTests(FlowCase):
         self.assertEqual(self.mails(), [])
 
 
+class WithdrawnClearBesideAPairFlowTests(FlowCase):
+    """Review case [20]: a withdrawn clear that never confirmed anything.
+
+    A two-account Claude weekly reset, account a's 5-hour session clear a
+    while later (taken back an hour after that), and a trusted post 40 min
+    after the pair, inside its hold. The session clear sat nearest the post,
+    any retraction within 6 h counted, so the post became
+    `reverted_on_our_account`, it still took the pair over, and nobody was
+    mailed at all.
+    """
+
+    def polls(self, plan):
+        detector, state, events = qp.Detector(), {}, []
+        fps = {"a": FP_A, "b": FP_B}
+        for i in range(max(len(levels) for levels in plan.values())):
+            for label, levels in plan.items():
+                weekly, session = levels[min(i, len(levels) - 1)]
+                rows = cp.normalise_usage(
+                    usage_payload(weekly=weekly, session=session, weekly_resets=T0 + 3 * DAY,
+                                  session_resets=T0 + 4 * 3600),
+                    label, T0 + 300 * i, plan_type="team" if label == "a" else "max",
+                    account_fp=fps[label],
+                )
+                events += cp.observe_rows(detector, rows, state)
+        return events
+
+    def test_a_withdrawn_session_clear_does_not_unconfirm_a_reset_or_its_mail(self):
+        events = self.polls({
+            "a": [(48, 22), (0, 22), (0, 22), (0, 22), (0, 60), (0, 0), (0, 0), (0, 0)],
+            "b": [(60, 22), (0, 22), (0, 22), (0, 22)],
+        })
+        session = [e for e in events if e.get("kind") == "clear" and e.get("window_minutes") == 300]
+        self.assertTrue(session)
+        events.append({**session[-1], "kind": "retraction", "confirmed": False,
+                       "reverted_at": T0 + 2400 + 3600, "used_at_revert": 60.0})
+        self.export("anthropic", events)
+        self.build(T0 + 900)
+        self.notify(T0 + 900)
+        self.posts["anthropic"] = [trusted_post(
+            "2109132167112782291", T0 + 2400 + 300, vendor="anthropic",
+            text="We've just reset weekly limits for everyone.", announcer="lydiahallie")]
+        for now in (T0 + 2400 + 3700, T0 + 300 + HOLD + 60, T0 + 300 + HOLD + 3600):
+            data = self.build(now)
+            self.notify(now)
+            (post,) = data["vendors"]["anthropic"]["events"]
+            self.assertEqual(post["status"], "confirmed")
+            self.assertEqual(post["merged_from"], probe_incident_key("anthropic", "weekly", T0))
+        self.assertEqual([m["subject"] for m in self.mails()],
+                         ["Claude Code: usage limits reset"] * 2)
+        self.assertEqual(self.store.open_alert_conditions(), set())
+
+
 class OneResetOneIncidentFlowTests(FlowCase):
     """A vendor reset clears every window it touches; it is still one mail.
 

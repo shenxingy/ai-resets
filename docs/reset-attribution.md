@@ -210,7 +210,13 @@ A probe-first incident (no announcement) can only start from `vendor_reset`:
 - **Incident key:** `<vendor>:probe-<window>-<lower bracket of the earliest
   clear>`, for example `openai:probe-weekly-1791691072`.
 - **A post arriving later:** a trusted post that confirms the pair takes the
-  incident over and records it in `merged_from`.
+  incident over and records it in `merged_from`. Only a post whose own status
+  is `confirmed` can: a post that ends up historical, merely announced or
+  `reverted_on_our_account` leaves the pair its own incident.
+- **A withdrawn clear near a post** makes it `reverted_on_our_account` only if,
+  while it stood, it would have confirmed that post (a member of a pair that
+  stood counts as the pair), and only on a window that can pair. Standing
+  evidence that confirms the post wins over a withdrawal however near.
 - **A retraction:** a pair that stood and that a retraction then breaks
   becomes one `retracted` row, so the people who were mailed get the
   correction. A probe retracts a clear only when two consecutive reads show it

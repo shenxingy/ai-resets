@@ -902,17 +902,66 @@ def clear_accounts(clear):
 # never starts an incident, whatever it reads.
 
 
-def match_observation(event, clears):
+def confirmed_by(event, members, withdrawn_keys=frozenset()):
+    """Would any of these clears, as they stood, confirm this announcement?
+
+    The test a post must pass to take a pair over: one member inside the
+    +-6 h match window that speaks_to() the post.
+    """
+    announced = event_epoch(event)
+    return announced is not None and any(
+        abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
+        and speaks_to(event, clear, withdrawn_keys)
+        for clear in members
+    )
+
+
+def withdrawn_verdict(clear, withdrawn_keys=frozenset()):
+    """The verdict a withdrawn clear held while it stood.
+
+    attribution never stamps a retracted clear, so on the log it reads as its
+    own class (`unattributed`, `unresolved`, ...). A member of a pair that
+    stood before the retraction (groundtruth.withdrawn_pair_clears) was a
+    `vendor_reset`, and that is what it was evidence of.
+    """
+    return groundtruth.VERDICT_VENDOR if clear.get("key") in withdrawn_keys else clear["verdict"]
+
+
+def speaks_to(event, clear, withdrawn_keys=frozenset()):
+    """Does this clear, standing or withdrawn, bear on this announcement?
+
+    Standing: incidents.corroborates says it confirms the post — its kind, its
+    stage and the verdict's own window (a banked reset is confirmed by a
+    credit grant, never by a window clear; one account's clear only inside
+    the tight window of a trusted retrospective post).
+
+    Withdrawn: only if, while it stood, it WOULD have confirmed this post by
+    that same rule, and only on a window that can pair. Any retraction within
+    the +-6 h used to count, so a 5-hour session clear taken back nearer the
+    post than a two-account pair turned a confirmed reset into
+    `reverted_on_our_account` and the post mailed nobody (review case [20]).
+    """
+    if clear.get("retracted"):
+        family = clear.get("window_family")
+        if not isinstance(family, str) or family not in attribution.PAIRING_FAMILIES:
+            return False
+        verdict = withdrawn_verdict(clear, withdrawn_keys)
+    else:
+        verdict = clear["verdict"]
+    return incidents.corroborates(event, verdict, iso_z(clear["t"]))
+
+
+def match_observation(event, clears, withdrawn_keys=frozenset()):
     """The one probe clear that speaks to this announcement, if any.
 
-    A clear is a candidate when incidents.corroborates says it confirms this
-    announcement — its kind, its stage, and the verdict's own window (a banked
-    reset is confirmed by a credit grant, never by a window clear; one
-    account's clear only inside the tight window of a trusted retrospective
-    post) — or when it is a retraction within the +-6 h match window: a
-    withdrawn clear under a standing announcement is the
-    `reverted_on_our_account` footnote, and fusion must see it precisely
-    because it is no longer evidence.
+    The nearest standing clear that confirms it, else the nearest withdrawn
+    one that would have (speaks_to): a withdrawn clear under a standing
+    announcement is the `reverted_on_our_account` footnote, and fusion must
+    see it precisely because it is no longer evidence. Standing evidence
+    wins over a withdrawal however near the withdrawal sits: an account
+    whose first clear reverted and which then cleared again beside a second
+    account has seen the announced reset, and calling the post reverted
+    would leave the standing pair to mail "not announced yet" beside it.
     """
     announced = event_epoch(event)
     if announced is None:
@@ -924,11 +973,10 @@ def match_observation(event, clears):
         # gives a forecast no upper bound, and without this a credit grant
         # weeks later "confirmed" the 2026-08-21 forecast in rehearsal.
         if abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
-        and (
-            clear.get("retracted")
-            or incidents.corroborates(event, clear["verdict"], iso_z(clear["t"]))
-        )
+        and speaks_to(event, clear, withdrawn_keys)
     ]
+    standing = [clear for clear in candidates if not clear.get("retracted")]
+    candidates = standing or candidates
     if not candidates:
         return None
     nearest = min(candidates, key=lambda clear: (abs(clear["t"] - announced), str(clear.get("key"))))
@@ -1054,9 +1102,12 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             print(f"skipping {key} withdrawn pairs: {error}")
             broken = []
         live, withdrawn = probe_groups(key, clears, broken)
+        withdrawn_keys = frozenset(
+            clear["key"] for _, members in withdrawn for clear in members
+        )
         claimed = {}
         for event in events:
-            match = match_observation(event, clears)
+            match = match_observation(event, clears, withdrawn_keys)
             trusted = incidents.is_trusted_announcement(event)
             own = match
             if (
@@ -1073,24 +1124,21 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             stable_id = str(event.get("id") or "").strip()
             if stable_id:
                 event["incident_key"] = f"{key}:{stable_id}"
-            if not (trusted and stable_id):
+            if not (trusted and stable_id) or event["status"] != incidents.STATUS_CONFIRMED:
+                # Only a post the pair actually CONFIRMS may take it over. A
+                # pair handed to a post that ends up reverted, historical or
+                # merely announced loses its own status row and mails as
+                # neither (review case [20]: two subscribers, no mail at all).
                 continue
             # Every pair this post confirms is this post's reset, not only the
             # nearest clear: a lone clear on another window can sit closer to
             # the post than the pair does, and leaving the pair unclaimed
             # would mail one reset twice. Events are in announcement order, so
             # the earliest trusted post that confirms a pair claims it.
-            announced = event_epoch(event)
             mine = [
                 incident
                 for incident, members in live
-                if incident not in claimed
-                and announced is not None
-                and any(
-                    abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
-                    and incidents.corroborates(event, clear["verdict"], iso_z(clear["t"]))
-                    for clear in members
-                )
+                if incident not in claimed and confirmed_by(event, members)
             ]
             for incident in mine:
                 claimed[incident] = event["incident_key"]

@@ -266,6 +266,9 @@ def clear_observations(
             # fingerprints stay in the log.
             "account": event.get("account"),
             "window_minutes": event.get("window_minutes"),
+            # Which window, as attribution names it: fusion lets a withdrawn
+            # clear speak against a post only on a window that could pair.
+            "window_family": event.get("window_family"),
             "clear_bracket_lo": event.get("clear_bracket_lo"),
             "clear_bracket_hi": event.get("clear_bracket_hi"),
         }
@@ -309,6 +312,7 @@ def withdrawn_pair_clears(
                 "retracted": key in retracted,
                 "account": clears[key].get("account"),
                 "window_minutes": clears[key].get("window_minutes"),
+                "window_family": clears[key].get("window_family"),
                 "clear_bracket_lo": clears[key].get("clear_bracket_lo"),
                 "used_before": clears[key].get("used_before"),
                 "used_after": clears[key].get("used_after"),
