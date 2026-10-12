@@ -28,6 +28,29 @@ WEEK_MINUTES = 10080
 SESSION_MINUTES = 300
 DAY = 86400
 
+# The probe reads each profile's .claude.json and history.jsonl from the home
+# directory by default. On the machine this runs on, those are the owner's
+# real files, so every test in this module starts with all four pointed into
+# an empty directory: a test that wants an identity or a history writes one.
+_PROFILE_ENV = None
+_PROFILE_DIR = None
+
+
+def setUpModule():
+    global _PROFILE_ENV, _PROFILE_DIR
+    _PROFILE_DIR = tempfile.TemporaryDirectory()
+    root = Path(_PROFILE_DIR.name)
+    _PROFILE_ENV = mock.patch.dict(os.environ, {
+        f"AI_RESETS_CLAUDE_{kind}_{label}": str(root / f"absent-{kind.lower()}-{label}")
+        for kind in ("CONFIG", "HISTORY") for label in ("A", "B")
+    })
+    _PROFILE_ENV.start()
+
+
+def tearDownModule():
+    _PROFILE_ENV.stop()
+    _PROFILE_DIR.cleanup()
+
 # A 108-character access token, the length the credential file actually holds.
 FAKE_TOKEN = "sk-ant-oat01-" + "A9z" * 31 + "Bq"
 
@@ -633,12 +656,17 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual(qp.NATURAL_GRACE_SECONDS, 2 * expected + 60)
 
     def test_the_codex_constants_are_put_back_even_on_an_exception(self):
-        before = (qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS)
+        before = (qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS, qp.CREDIT_BANK, qp.LOCAL_TRACE)
         with self.assertRaises(RuntimeError):
             with cp.anthropic_contract():
                 self.assertEqual(qp.NATURAL_GRACE_SECONDS, 660)
+                # No ledger to read, and a local trace that must be read.
+                self.assertEqual((qp.CREDIT_BANK, qp.LOCAL_TRACE), (False, True))
                 raise RuntimeError("boom")
-        self.assertEqual((qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS), before)
+        self.assertEqual(
+            (qp.POLL_SECONDS, qp.NATURAL_GRACE_SECONDS, qp.CREDIT_BANK, qp.LOCAL_TRACE), before
+        )
+        self.assertEqual((qp.CREDIT_BANK, qp.LOCAL_TRACE), (True, False))
 
     def test_a_single_idle_read_on_an_unchanged_anchor_is_dropped(self):
         # On a fixed-anchor contract one 0% sample followed by usage proves
@@ -677,6 +705,7 @@ class DetectionTests(unittest.TestCase):
         self.assertIn("/limit-reset", event["reason"])
         self.assertFalse(cp.is_public(event, set()))
         self.assertIsNone(cp.verdict_of(event))
+        self.assertEqual(event["checks"]["local_trace"], "n_a")
 
     def test_session_only_appears_in_no_verdict_map_in_the_repository(self):
         # Four independent readers turn a classification into something a
@@ -714,7 +743,7 @@ class DetectionTests(unittest.TestCase):
                 )
             )
         self.assertEqual(events[0]["concordance"], cp.CONCORDANCE_DISAGREE)
-        # An owner alert, not evidence: it stays out of the public export.
+        # Not evidence: it stays out of the public export.
         self.assertFalse(cp.is_public(events[0], set()))
 
     def test_an_idle_other_account_is_unknown_rather_than_a_disagreement(self):
@@ -728,6 +757,360 @@ class DetectionTests(unittest.TestCase):
                 )
             )
         self.assertEqual(events[0]["concordance"], cp.CONCORDANCE_UNKNOWN)
+
+
+# ─── Attribution: identity, the local trace, account changes ─────────────────
+
+FP = "aaaaaaaaaaaa"
+OTHER_FP = "bbbbbbbbbbbb"
+
+
+def profile_file(path: Path, *, org="org-raw-0001", account="acct-raw-0001") -> Path:
+    """A profile .claude.json in the recorded shape, with placeholder ids."""
+    path.write_text(json.dumps({
+        "numStartups": 12,
+        "oauthAccount": {
+            "accountUuid": account,
+            "organizationUuid": org,
+            "emailAddress": "owner@example.invalid",
+            "organizationName": "Example Org Name",
+            "organizationType": "claude_max",
+        },
+    }), encoding="utf-8")
+    return path
+
+
+def history_file(path: Path, entries) -> Path:
+    """history.jsonl lines: (display, epoch seconds) -> milliseconds, as recorded."""
+    path.write_text("".join(
+        json.dumps({"display": display, "pastedContents": {}, "timestamp": moment * 1000,
+                    "project": "/work", "sessionId": "s"}) + "\n"
+        for display, moment in entries
+    ), encoding="utf-8")
+    return path
+
+
+class IdentityTests(StateDirTest):
+    """docs/reset-attribution.md: Claude `account_fp` from `.claude.json`."""
+
+    def test_the_fingerprint_is_the_org_and_the_account_hashed_together(self):
+        path = profile_file(self.state / "claude.json")
+        self.assertEqual(
+            cp.read_account_fingerprint(path),
+            qp.account_fingerprint("org-raw-0001/acct-raw-0001"),
+        )
+        # Moving the same user to another org is a different account here:
+        # account a's 2026-10-11 switch was exactly that.
+        moved = profile_file(self.state / "moved.json", org="org-raw-0002")
+        self.assertNotEqual(cp.read_account_fingerprint(moved), cp.read_account_fingerprint(path))
+
+    def test_an_unreadable_profile_is_unread_not_an_identity(self):
+        cases = {
+            "missing": None,
+            "not json": "{half",
+            "no account block": json.dumps({"numStartups": 1}),
+            "block of the wrong type": json.dumps({"oauthAccount": "x"}),
+            "no org": json.dumps({"oauthAccount": {"accountUuid": "a"}}),
+            "no account": json.dumps({"oauthAccount": {"organizationUuid": "o"}}),
+            "empty ids": json.dumps({"oauthAccount": {"accountUuid": "", "organizationUuid": ""}}),
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                path = self.state / f"{name}.json"
+                if text is not None:
+                    path.write_text(text, encoding="utf-8")
+                self.assertIsNone(cp.read_account_fingerprint(path))
+
+    def test_the_default_paths_are_where_each_profile_keeps_them(self):
+        names = [f"AI_RESETS_CLAUDE_{kind}_{label}" for kind in ("CONFIG", "HISTORY")
+                 for label in ("A", "B")]
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for name in names:
+                os.environ.pop(name, None)
+            configs, histories = cp.profile_config_paths(), cp.history_paths()
+        home = Path.home()
+        # The primary profile keeps its config at $HOME, not inside ~/.claude.
+        self.assertEqual(configs["a"], home / ".claude.json")
+        self.assertEqual(configs["b"], home / ".claude-profiles" / "main1" / ".claude.json")
+        self.assertEqual(histories["a"], home / ".claude" / "history.jsonl")
+        self.assertEqual(histories["b"], home / ".claude-profiles" / "main1" / "history.jsonl")
+        with mock.patch.dict(os.environ, {"AI_RESETS_CLAUDE_CONFIG_B": "/elsewhere/b.json"}):
+            self.assertEqual(cp.profile_config_paths()["b"], Path("/elsewhere/b.json"))
+
+    def test_every_poll_reads_the_profile_and_no_raw_id_is_ever_written(self):
+        far_future_ms = 2_000_000_000 * 1000
+        creds = credential_file(self.state / "creds-a.json", expires_at_ms=far_future_ms)
+        config = profile_file(self.state / "claude-a.json")
+        probe = cp.AccountProbe("a", creds, config)
+        detector, claude_state = qp.Detector(), {}
+        events = []
+        for i, org in enumerate(("org-raw-0001", "org-raw-0001", "org-raw-0002")):
+            profile_file(config, org=org)
+            with mock.patch.object(cp, "fetch_usage", return_value=usage_payload()):
+                cp.poll_all([probe], detector, claude_state, now=T0 + 300 * i)
+        rows = [json.loads(line) for line in cp.SAMPLES_FILE.read_text().splitlines()]
+        self.assertEqual(
+            {row["account_fp"] for row in rows},
+            {qp.account_fingerprint("org-raw-0001/acct-raw-0001"),
+             qp.account_fingerprint("org-raw-0002/acct-raw-0001")},
+        )
+        events = [json.loads(line) for line in cp.EVENTS_FILE.read_text().splitlines()]
+        self.assertTrue(events)
+        self.assertTrue(all(e["kind"] == qp.EVENT_ACCOUNT_CHANGE for e in events))
+        cp.export_observations(self.state / "anthropic.json", now=T0 + 600)
+        for path in self.state_files():
+            if path.name.startswith(("creds-", "claude-")):
+                continue  # the inputs, which this probe did not write
+            text = path.read_text(encoding="utf-8")
+            for raw in ("org-raw-0001", "org-raw-0002", "acct-raw-0001",
+                        "owner@example.invalid", "Example Org Name"):
+                self.assertNotIn(raw, text, path.name)
+
+    def test_the_default_probe_reads_the_configured_profile(self):
+        with mock.patch.dict(os.environ, {"AI_RESETS_CLAUDE_CONFIG_A": "/x/a.json"}):
+            probe = cp.AccountProbe("a", self.state / "creds-a.json")
+        self.assertEqual(probe.config_path, Path("/x/a.json"))
+
+
+class LocalTraceTests(StateDirTest):
+    """The Claude Code reset menu, read from the profile's history at clear time."""
+
+    ANCHOR = T0 + 3 * DAY
+
+    def setUp(self):
+        super().setUp()
+        self.detector, self.claude_state = qp.Detector(), {}
+        self.history = {label: self.state / f"history-{label}.jsonl" for label in ("a", "b")}
+        patcher = mock.patch.dict(os.environ, {
+            f"AI_RESETS_CLAUDE_HISTORY_{label.upper()}": str(path)
+            for label, path in self.history.items()
+        })
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def feed(self, weekly, t, label="a", fp=FP, plan="max", session=22):
+        rows = cp.normalise_usage(
+            usage_payload(weekly=weekly, session=session, weekly_resets=self.ANCHOR),
+            label, t, plan_type=plan, account_fp=fp,
+        )
+        return cp.observe_rows(self.detector, rows, self.claude_state)
+
+    def early_clear(self, label="a", **edit):
+        self.feed(48, T0, label, **edit)
+        self.feed(0, T0 + 300, label, **edit)
+        events = self.feed(0, T0 + 600, label, **edit)
+        return [e for e in events if e.get("limit_kind") == "weekly_all"]
+
+    def test_every_check_passing_is_unattributed_and_still_private(self):
+        history_file(self.history["a"], [("/model", T0 - 100)])
+        event = self.early_clear()[0]
+        self.assertEqual(event["classification"], qp.CLASS_UNATTRIBUTED)
+        self.assertEqual(event["checks"], {
+            "identity": "same", "plan": "same", "credit": "no_bank",
+            "bracket": "tight", "local_trace": "none",
+        })
+        self.assertEqual(event["window_family"], "weekly_all")
+        self.assertFalse(cp.is_public(event, set()))
+        self.assertEqual(cp.verdict_of(event), qp.VERDICT_UNATTRIBUTED)
+        # Still compared with the other account, like any early clear.
+        self.assertEqual(event["concordance"], cp.CONCORDANCE_UNKNOWN)
+
+    def test_the_reset_menu_within_the_hour_is_the_owners_own_reset(self):
+        # 2026-09-30, account b: /rate-limit-options 30 minutes before.
+        for command in ("/rate-limit-options", "/limit-reset weekly"):
+            with self.subTest(command=command):
+                self.detector, self.claude_state = qp.Detector(), {}
+                history_file(self.history["b"], [(command, T0 + 300 - 1800)])
+                event = self.early_clear("b")[0]
+                self.assertEqual(event["classification"], qp.CLASS_SELF)
+                self.assertEqual(event["checks"]["local_trace"], "found")
+                self.assertIn(command.split()[0], event["reason"])
+                self.assertNotIn("concordance", event)
+
+    def test_the_menu_is_found_even_when_another_check_could_not_run(self):
+        # Contract step 4 precedes step 5: a positive own-cause needs nothing else.
+        history_file(self.history["a"], [("/rate-limit-options", T0 + 100)])
+        event = self.early_clear(fp=None)[0]
+        self.assertEqual(event["classification"], qp.CLASS_SELF)
+
+    def test_the_lookback_is_one_hour_before_the_bracket(self):
+        lo, hi = T0, T0 + 300
+        for moment, expected in (
+            (lo - 3600, qp.CLASS_SELF),
+            (lo - 3601, qp.CLASS_UNATTRIBUTED),
+            (hi, qp.CLASS_SELF),
+            (hi + 1, qp.CLASS_UNATTRIBUTED),
+        ):
+            with self.subTest(offset=moment - lo):
+                self.detector, self.claude_state = qp.Detector(), {}
+                history_file(self.history["a"], [("/rate-limit-options", moment)])
+                self.assertEqual(self.early_clear()[0]["classification"], expected)
+
+    def test_a_history_that_cannot_be_read_keeps_the_clear_unresolved(self):
+        event = self.early_clear()[0]  # no file written
+        self.assertEqual(event["classification"], qp.CLASS_GLOBAL)
+        self.assertEqual(event["checks"]["local_trace"], "unread")
+        self.assertIn("history could not be opened", event["reason"])
+        self.assertEqual(cp.verdict_of(event), qp.VERDICT_UNRESOLVED)
+
+    def test_a_reset_line_that_cannot_be_placed_is_unread_not_none(self):
+        cases = {
+            "torn line": '{"display": "/rate-limit-options", "timest\n',
+            "no time": json.dumps({"display": "/rate-limit-options"}) + "\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                self.detector, self.claude_state = qp.Detector(), {}
+                self.history["a"].write_text(text, encoding="utf-8")
+                event = self.early_clear()[0]
+                self.assertEqual(event["checks"]["local_trace"], "unread")
+                self.assertEqual(event["classification"], qp.CLASS_GLOBAL)
+
+    def test_a_command_named_mid_prompt_is_not_the_menu(self):
+        history_file(self.history["a"], [("what does /rate-limit-options do?", T0 + 100)])
+        self.assertEqual(self.early_clear()[0]["classification"], qp.CLASS_UNATTRIBUTED)
+
+    def test_the_other_profiles_history_is_not_this_accounts(self):
+        history_file(self.history["a"], [])
+        history_file(self.history["b"], [("/rate-limit-options", T0 + 100)])
+        self.assertEqual(self.early_clear("a")[0]["classification"], qp.CLASS_UNATTRIBUTED)
+
+    def test_the_history_is_read_at_clear_time_only(self):
+        history_file(self.history["a"], [])
+        with mock.patch.object(cp, "reset_menu_trace", wraps=cp.reset_menu_trace) as read:
+            for i in range(4):
+                self.feed(48, T0 - 300 * (4 - i))
+            self.assertEqual(read.call_count, 0)
+            self.early_clear()
+            # A natural expiry and a 5-hour clear never read it either.
+            self.feed(0, T0 + 900, session=0)
+            self.feed(0, T0 + 1200, session=0)
+        self.assertEqual(read.call_count, 1)
+
+    def test_a_check_that_could_not_run_is_named_alongside_the_trace(self):
+        history_file(self.history["a"], [])
+        event = self.early_clear(fp=None)[0]
+        self.assertEqual(event["classification"], qp.CLASS_GLOBAL)
+        self.assertIn("account fingerprint", event["reason"])
+        self.assertIn("Personal limit resets can also restore weekly limits", event["reason"])
+
+    def test_two_unattributed_accounts_are_recorded_as_agreeing(self):
+        history_file(self.history["a"], [])
+        history_file(self.history["b"], [])
+        for label in ("a", "b"):
+            self.feed(48, T0, label, fp=FP if label == "a" else OTHER_FP)
+        for label in ("a", "b"):
+            self.feed(0, T0 + 300, label, fp=FP if label == "a" else OTHER_FP)
+        first = [e for e in self.feed(0, T0 + 600, "a") if e.get("limit_kind") == "weekly_all"]
+        second = [e for e in self.feed(0, T0 + 600, "b", fp=OTHER_FP)
+                  if e.get("limit_kind") == "weekly_all"]
+        self.assertEqual(first[0]["classification"], qp.CLASS_UNATTRIBUTED)
+        self.assertEqual(second[0]["concordance"], cp.CONCORDANCE_AGREEING)
+        # Stage 1 publishes nothing new: the two-account upgrade is not here.
+        self.assertFalse(cp.is_public(second[0], set()))
+
+    def test_the_unattributed_sentence_says_what_was_checked_and_not_whose_it_was(self):
+        history_file(self.history["a"], [])
+        row = cp.observation(self.early_clear()[0], set())
+        said = f"{row['headline']} {row['evidence']}"
+        self.assertIn("with no cause on our side that this probe can see", row["headline"])
+        self.assertIn("no Claude Code reset menu in the hour before", row["evidence"])
+        self.assertIn("cannot say whose reset this was", row["evidence"])
+        self.assertNotIn("vendor", said.lower())
+        self.assertFalse(row["public"])
+
+
+class ClaudeAccountChangeTests(StateDirTest):
+    """2026-10-11 21:03 UTC: account a went from a Max org to a Team org."""
+
+    ANCHOR = T0 + 3 * DAY
+
+    def setUp(self):
+        super().setUp()
+        self.detector, self.claude_state = qp.Detector(), {}
+
+    def feed(self, weekly, t, fp, plan, label="a"):
+        rows = cp.normalise_usage(
+            usage_payload(weekly=weekly, weekly_resets=self.ANCHOR), label, t,
+            plan_type=plan, account_fp=fp,
+        )
+        return cp.observe_rows(self.detector, rows, self.claude_state)
+
+    def test_the_org_switch_is_an_account_change_on_every_slot_not_a_clear(self):
+        self.feed(100, T0, FP, "max")
+        events = self.feed(1, T0 + 300, OTHER_FP, "team")
+        self.assertTrue(events)
+        self.assertEqual({e["kind"] for e in events}, {qp.EVENT_ACCOUNT_CHANGE})
+        self.assertEqual({e["limit_kind"] for e in events},
+                         {"session", "weekly_all", "weekly_scoped"})
+        for event in events:
+            # Never re-labelled session_only: it is not a clear on any window.
+            self.assertEqual(event["classification"], qp.CLASS_ACCOUNT_CHANGE)
+            self.assertEqual((event["plan_before"], event["plan_after"]), ("max", "team"))
+            self.assertEqual(event["account"], "a")
+        self.assertEqual(self.feed(1, T0 + 600, OTHER_FP, "team"), [])
+
+    def test_a_plan_change_alone_is_enough_for_rows_written_before_fingerprints(self):
+        self.feed(100, T0, None, "max")
+        events = self.feed(1, T0 + 300, None, "team")
+        self.assertEqual({e["kind"] for e in events}, {qp.EVENT_ACCOUNT_CHANGE})
+
+    def test_one_switch_is_one_private_observation(self):
+        self.feed(100, T0, FP, "max")
+        events = self.feed(1, T0 + 300, OTHER_FP, "team")
+        qp.append_jsonl(cp.EVENTS_FILE, events)
+        out = self.state / "anthropic.json"
+        cp.export_observations(out, now=T0 + 600)
+        rows = json.loads(out.read_text())["observations"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["verdict"], qp.VERDICT_ACCOUNT_CHANGE)
+        self.assertFalse(rows[0]["public"])
+        # Bracketed by the two reads it happened between, like a clear.
+        self.assertEqual(rows[0]["observed_before"], qp.iso_utc(T0))
+        self.assertEqual(rows[0]["observed_after"], qp.iso_utc(T0 + 300))
+        self.assertIn("A different account on a different plan (max to team)", rows[0]["evidence"])
+        self.assertNotIn(FP, rows[0]["evidence"])
+        self.assertNotIn(OTHER_FP, rows[0]["evidence"])
+
+    def test_the_change_is_logged_for_the_owner(self):
+        self.feed(100, T0, FP, "max")
+        with mock.patch.object(qp, "log") as logged:
+            cp.log_events(self.feed(1, T0 + 300, OTHER_FP, "team"))
+        self.assertIn("ACCOUNT CHANGED claude:a", logged.call_args_list[0][0][0])
+
+
+class AccountsPhraseTests(unittest.TestCase):
+    """The one public description of the population, derived not written."""
+
+    def test_the_phrase_follows_the_plans_each_account_last_read(self):
+        cases = {
+            (("a", "team"), ("b", "max")): "Two accounts (Max and Team) on one operator machine",
+            (("a", "max"), ("b", "max")): "Two Max accounts on one operator machine",
+            (("a", "max"),): "Two accounts on one operator machine",
+            (("a", "max"), ("b", None)): "Two accounts on one operator machine",
+            (): "Two accounts on one operator machine",
+            (("a", "ultra"), ("b", "ultra")): "Two Ultra accounts on one operator machine",
+            (("a", "max"), ("b", "Owner Name <x@y>")): "Two accounts on one operator machine",
+        }
+        for plans, phrase in cases.items():
+            with self.subTest(plans=plans):
+                self.assertEqual(cp.accounts_phrase(dict(plans)), phrase)
+
+    def test_each_account_s_plan_comes_from_its_newest_row(self):
+        # Account a's per-model slot stopped reporting when it moved to Team;
+        # its last row there still says max.
+        detector = qp.Detector({"slots": {
+            "claude:a:weekly_scoped:opus/10080": {"last": {"t": 100, "plan_type": "max"}},
+            "claude:a:weekly_all/10080": {"last": {"t": 200, "plan_type": "team"}},
+            "claude:b:weekly_all/10080": {"last": {"t": 150, "plan_type": "max"}},
+        }})
+        self.assertEqual(cp.plans_by_account(detector), {"a": "team", "b": "max"})
+
+    def test_the_coverage_sentence_carries_the_derived_phrase(self):
+        peaks = {"claude:a:weekly_all/10080": 40.0, "claude:b:weekly_all/10080": 30.0}
+        sentence = cp.coverage_sentence(peaks, T0, {}, {"a": "team", "b": "max"})
+        self.assertTrue(sentence.startswith("Two accounts (Max and Team) on one operator machine"))
+        self.assertNotIn("20x", sentence)
 
 
 # ─── Health, and the file it shares with the Codex probe ─────────────────────
@@ -953,7 +1336,9 @@ class CycleTests(StateDirTest):
         self.assertIn("the cause is unverified", text)
         self.assertNotIn("nothing this account did explains it", text)
         self.assertIn("Personal limit resets can restore weekly limits too", text)
-        self.assertIn("Two Max 20x accounts on one operator machine", text)
+        # Both fixture credentials read subscriptionType "max".
+        self.assertIn("Two Max accounts on one operator machine", text)
+        self.assertNotIn("20x", text)
 
     def test_a_five_hour_clear_never_reaches_the_export(self):
         anchor = T0 + 4 * 3600

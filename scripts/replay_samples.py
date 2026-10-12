@@ -17,7 +17,9 @@ everything the rules of the day threw away. Two known losses:
 
 Both are recoverable, because the samples were never lost. This replays the
 whole sample history through the CURRENT detector and reports what the log is
-missing. With --apply it appends those records, each stamped `backfilled` with
+missing. That includes records a newer rule emits where the old one wrote
+nothing, such as an `account_change` for the 2026-09-19 plan switch; a clear
+already in the log under an older classification is left as it was written. With --apply it appends those records, each stamped `backfilled` with
 the ruleset that produced it, so a reader can always tell a live detection from
 a later re-derivation.
 
@@ -86,6 +88,12 @@ def describe(record: dict) -> str:
     kind = record.get("kind") or "clear"
     if kind == "credit_granted":
         detail = f"credits {record.get('credits_before')} -> {record.get('credits_after')}"
+    elif kind == "account_change":
+        # Fingerprints only ever: the raw ids never reach a row to print.
+        detail = (
+            f"plan {record.get('plan_before')} -> {record.get('plan_after')}, "
+            f"account {record.get('account_fp_before')} -> {record.get('account_fp_after')}"
+        )
     else:
         detail = (
             f"{record.get('used_before', 0):.0f}% -> {record.get('used_after', 0):.0f}%"

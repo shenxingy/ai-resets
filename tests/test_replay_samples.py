@@ -6,6 +6,8 @@ corrected, and it is recoverable because the samples were never lost. These
 tests use that exact shape.
 """
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -71,6 +73,37 @@ class ReplayTests(unittest.TestCase):
         # Provenance is not optional: a re-derivation must never be mistaken
         # for something the probe saw live.
         self.assertTrue(clears[0]["backfilled"])
+
+    def test_a_credit_spent_a_poll_before_the_clear_replays_as_self_applied(self):
+        # 2026-10-04: the count fell 2 -> 1 one poll BEFORE the window cleared,
+        # so the adjacent rows read 1 -> 1. The 2 was last written 82 minutes
+        # earlier, because the sample log only records a count that moves.
+        self.write(self.samples, [
+            sample(1791076912, 100, 1791580921, credits=2),
+            sample(1791081832, 100, 1791580921, credits=1),
+            sample(1791081892, 0, 1791686634, credits=1),
+            sample(1791082192, 1, 1791686634, credits=1),
+        ])
+        self.write(self.events, [])
+        self.run_replay("--apply")
+        clears = [e for e in self.events_now() if e.get("kind") == "clear"]
+        self.assertEqual([c["classification"] for c in clears], ["self_applied_credit"])
+
+    def test_a_plan_switch_replays_as_an_account_change(self):
+        # 2026-09-19: pro at 100% (last written four days earlier), then
+        # prolite at 0%. A switch of account, not a clear.
+        self.write(self.samples, [
+            {**sample(1789455761, 100, 1789932817, credits=0)},
+            {**sample(1789789445, 0, 1790394246, credits=0), "plan_type": "prolite"},
+            {**sample(1789789505, 1, 1790394255, credits=0), "plan_type": "prolite"},
+        ])
+        self.write(self.events, [])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.run_replay("--apply")
+        kinds = [e.get("kind") for e in self.events_now()]
+        self.assertEqual(kinds, ["account_change"])
+        self.assertIn("plan pro -> prolite", out.getvalue())
 
     def test_a_dry_run_writes_nothing(self):
         self.write(self.samples, AUG_30)
