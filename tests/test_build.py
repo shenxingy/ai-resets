@@ -1433,8 +1433,9 @@ class ProbeFirstFusionTests(unittest.TestCase):
     def test_a_withdrawn_half_turns_the_incident_into_a_retraction_row(self):
         clears = self.pair(FUSION_NOW - 3 * 3600)
         rows = self.exported(clears)
+        # Withdrawn after the mail hold ran out, so a mail may have gone.
         withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
-                     "reverted_at": FUSION_NOW - 3600}
+                     "reverted_at": FUSION_NOW - 1800}
         self.write_probe_log(clears + [withdrawn])
         vendors = {"openai": {"events": [], "observations": []}}
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
@@ -1461,6 +1462,28 @@ class ProbeFirstFusionTests(unittest.TestCase):
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
         self.assertEqual(vendors["openai"]["observations"], [])
 
+    def test_a_pair_withdrawn_inside_the_mail_hold_leaves_no_row(self):
+        # Privacy re-verification: a pair can form and break between two
+        # five-minute publishes. It was never shown and could not yet have
+        # been mailed, so a correction row would be the only public trace of
+        # the clear that still stands, and its key and digest gave away that
+        # clear's account and second.
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        later = max(c["detected_at"] for c in clears)
+        for reverted, rows in (
+            (later + 240, 0),
+            (later + incidents.OBSERVED_HOLD_SECONDS - 1, 0),
+            (later + incidents.OBSERVED_HOLD_SECONDS, 1),
+        ):
+            with self.subTest(after=reverted - later):
+                withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
+                             "reverted_at": reverted}
+                self.write_probe_log(clears + [withdrawn])
+                vendors = {"openai": {"events": [], "observations": []}}
+                with contextlib.redirect_stdout(io.StringIO()):
+                    build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+                self.assertEqual(len(vendors["openai"]["observations"]), rows)
+
     def test_a_withdrawn_half_is_found_even_when_the_other_read_disagree(self):
         # Claude: the first clear of a pair is written while the other account
         # is busy, so it reads `disagree`. Once its partner is withdrawn it is
@@ -1469,7 +1492,7 @@ class ProbeFirstFusionTests(unittest.TestCase):
         clears = self.pair(FUSION_NOW - 3 * 3600)
         clears[0]["concordance"] = "accounts_disagree"
         withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
-                     "reverted_at": FUSION_NOW - 3600}
+                     "reverted_at": FUSION_NOW - 1800}
         self.write_probe_log(clears + [withdrawn])
         vendors = {"openai": {"events": [], "observations": []}}
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))

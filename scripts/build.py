@@ -1116,6 +1116,26 @@ def probe_groups(vendor_key, clears, withdrawn=()):
     )
 
 
+def mailed_hold_passed(members):
+    """Could a probe-first mail have gone out before this pair broke?
+
+    Only once the lifecycle's hold had run out: it starts at the later clear
+    (fuse_incidents passes derive_status that clear as `observed_at`) and
+    nothing mails before it ends. A member whose clear or revert time cannot
+    be read answers yes — a correction owed and not sent is the worse error,
+    and the row carries no clear either way.
+    """
+    seen = [clear.get("t") for clear in members]
+    reverts = [clear.get("reverted_at") for clear in members if clear.get("retracted")]
+    readable = [
+        value for value in seen + reverts
+        if isinstance(value, int) and not isinstance(value, bool)
+    ]
+    if not reverts or len(readable) != len(seen) + len(reverts):
+        return True
+    return min(reverts) >= max(seen) + incidents.OBSERVED_HOLD_SECONDS
+
+
 def _clear_summary(clear):
     """One clear as the email's ground-truth block quotes it: labels, never fingerprints."""
     return {
@@ -1293,6 +1313,17 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             next(row for row in member_rows if row is not None)["status"] = status
 
         for incident, members in withdrawn:
+            if not mailed_hold_passed(members):
+                # Broken inside the hold, so never mailed: nobody is owed a
+                # correction, and the row would be the one public trace of
+                # the clear left standing — a lone `unattributed` clear the
+                # contract keeps private. A pair can form and break between
+                # two five-minute publishes, so "it was never on the page" is
+                # not something this build can rule out otherwise (privacy
+                # re-verification: the key and digest gave away the surviving
+                # clear's account and second).
+                print(f"no correction for {incident}: withdrawn inside the mail hold")
+                continue
             # What the notifier needs to correct a mail it sent, and nothing
             # a reader could learn a clear from: the key it filed the mail
             # under, the event key it recorded, and the status. The clears,

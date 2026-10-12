@@ -323,6 +323,7 @@ def withdrawn_pair_clears(
     if not records:
         return []
     retracted = attribution.retracted_ids(records)
+    reverted = attribution.reverted_at(records)
     clears = attribution.latest_clears(records)
     groups = []
     for members in attribution.withdrawn_pairs(records):
@@ -332,6 +333,7 @@ def withdrawn_pair_clears(
                 "t": clears[key].get("detected_at"),
                 "verdict": VERDICT_VENDOR,
                 "retracted": key in retracted,
+                "reverted_at": reverted.get(key),
                 "account": clears[key].get("account"),
                 "window_minutes": clears[key].get("window_minutes"),
                 "window_family": clears[key].get("window_family"),
