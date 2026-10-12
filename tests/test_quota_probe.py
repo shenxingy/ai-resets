@@ -597,6 +597,34 @@ class StaleReplicaTest(unittest.TestCase):
                 # 19% on the post-clear anchor is usage resuming: watch closed.
                 self.assertIsNone(d.slots["codex/10080"]["pending"])
 
+    def test_a_held_revert_read_breaks_the_run_of_confirming_reads(self):
+        # 91, 0, 92 (old anchor), 0, 0: the clear may only be confirmed by two
+        # idle reads in a row, so not at the read right after the doubt.
+        d = qp.Detector()
+        old = 1_000_000
+        events = feed(d, [sample(0, 91, old), sample(60, 0, 60 + WEEK_SECONDS),
+                          sample(120, 92, old), sample(180, 0, 180 + WEEK_SECONDS)])
+        self.assertEqual(events, [])
+        (clear,) = d.observe(sample(240, 0, 240 + WEEK_SECONDS))
+        self.assertTrue(clear["confirmed"])
+        self.assertEqual(clear["confirmed_at"], 240)
+
+    def test_a_held_revert_read_keeps_the_first_reads_level_and_anchor(self):
+        # The retraction says when usage came back and to what: the FIRST
+        # revert read. The second only confirms it (commit 5c0c1de).
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS),
+                 sample(120, 0, 120 + WEEK_SECONDS)])
+        self.assertEqual(d.observe(sample(180, 70, old)), [])
+        (retraction,) = d.observe(sample(240, 85, old + 86400))
+        self.assertEqual(retraction["kind"], qp.EVENT_RETRACTION)
+        self.assertEqual(
+            (retraction["reverted_at"], retraction["used_at_revert"],
+             retraction["resets_at_at_revert"], retraction["revert_confirmed_at"]),
+            (180, 70.0, old, 240),
+        )
+
     def test_one_stale_read_while_idle_leaves_the_clear_and_its_id_alone(self):
         # The backtest's scratch scenario: confirmed clear, idling at 2%, one
         # read of the pre-clear level on the pre-clear anchor at minute 200.

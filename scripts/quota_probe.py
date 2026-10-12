@@ -1215,6 +1215,13 @@ class Detector:
                 held = {**held, "reads": int(held.get("reads") or 0) + 1}
                 if held["reads"] < REVERT_POLLS:
                     pending["revert_read"] = held
+                    if not pending.get("confirmed"):
+                        # CONFIRM_POLLS counts CONSECUTIVE idle reads. A read
+                        # that says "reverted" breaks the run even while it is
+                        # held for a second opinion; without this, idle,
+                        # revert, idle confirmed a clear across the very read
+                        # that doubted it (re-verification, 2026-10-11).
+                        pending["confirmations"] = 0
                     log(
                         f"REVERT READ held {key} {row['used_percent']:.0f}% on anchor "
                         f"{row.get('resets_at')}: retracted only if the next read agrees"
