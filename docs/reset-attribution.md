@@ -165,6 +165,13 @@ An `unattributed` clear becomes the VENDOR's in exactly two ways:
   The two clears must come from different probe labels as well as different
   fingerprints, and both must be confirmed and not retracted. Both become
   `vendor_reset` (public), and each names the other as its witness.
+  - **Only the primary weekly window pairs:** Codex's base limit
+    (`codex/10080`) and Claude's all-models window (`weekly_all`). A vendor
+    reset clears the per-model and secondary weekly windows too
+    (`weekly_scoped:<model>`, `codex_bengalfox`), often a poll later. Paired on
+    their own they made one reset two incidents and two mails, and a pair at
+    its limit on the primary window escaped the exception below through a
+    scoped window that was not. Those windows stay `unattributed`.
   - **Choosing the witness:** the nearest qualifying clear, with a tie going
     to the lower event id. Three or more accounts clearing together form one
     incident.
@@ -327,6 +334,8 @@ marked.
     now.** The email's "what our account saw" line is checked before probe
     health. A clear already recorded therefore still confirms a post while
     the probe is blind.
+11. **Only each vendor's primary weekly window pairs.** The draft paired any
+    window family. See "Two accounts" above.
 
 ## Not in scope
 

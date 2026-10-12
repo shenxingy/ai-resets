@@ -1099,6 +1099,19 @@ class ProbeFirstFusionTests(unittest.TestCase):
         vendor = self.fuse_pair(clears + [expiry], [post])
         self.assertEqual(vendor["events"][0]["status"], "confirmed")
 
+    def test_a_three_account_cascade_is_one_incident(self):
+        a, b = self.pair(FUSION_NOW - 3 * 3600)
+        c = dict(b, event_id="c:codex/10080:x", account="c",
+                 account_fp_before="cccccccccccc", account_fp_after="cccccccccccc",
+                 detected_at=b["detected_at"] + 600, clear_bracket_hi=b["clear_bracket_hi"] + 600,
+                 clear_bracket_lo=b["clear_bracket_lo"] + 600)
+        rows = self.fuse_pair([a, b, c])["observations"]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["incident_key"] for r in rows},
+                         {f"openai:probe-weekly-{FUSION_NOW - 3 * 3600 - 60}"})
+        self.assertEqual([r["status"] for r in rows if "status" in r], ["observed"])
+        self.assertEqual(rows[0]["accounts"], ["a", "b", "c"])
+
     def test_a_third_account_keeps_the_incident_standing_after_one_is_withdrawn(self):
         a, b = self.pair(FUSION_NOW - 3 * 3600)
         c = dict(b, event_id="c:codex/10080:x", account="c",

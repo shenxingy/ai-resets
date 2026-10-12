@@ -86,7 +86,8 @@ limit reset redeemed on the web. So an early clear counts as the vendor's
 only with a **second witness**:
 
 - **another of our accounts.** It must be a different account, cleared the
-  same window early within the hour, and passed the same checks; or
+  same primary weekly window early within the hour, and passed the same
+  checks; or
 - **a trusted vendor post** saying the reset already happened, posted between
   one hour before and three hours after the clear. The post is marked
   confirmed. The single account's clear stays private.
@@ -94,7 +95,7 @@ only with a **second witness**:
 | Verdict | Meaning | Published |
 |---|---|---|
 | `natural_expiry` | Cleared at its scheduled expiry | yes |
-| `vendor_reset` | Two of our accounts cleared the same window early within an hour, each `unattributed`, not both at 95% or more | yes, beside its witness |
+| `vendor_reset` | Two of our accounts cleared the same primary weekly window early within an hour, each `unattributed`, not both at 95% or more | yes, beside its witness |
 | `unattributed` | Cleared early, with every own-cause the probe can see checked and excluded | **no** |
 | `account_change` | The account or plan differs across the clear; not a reset | **no** |
 | `self_applied` | A banked credit left (Codex), or the Claude Code reset menu was opened in the hour before (Claude) | **no** |

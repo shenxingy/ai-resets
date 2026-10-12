@@ -125,6 +125,22 @@ class FlowCase(unittest.TestCase):
                 events += cp.observe_rows(detector, rows, state)
         return events
 
+    def claude_window_polls(self, plan, *, start=T0):
+        """`plan` is {label: [(weekly_all, weekly_scoped) per poll]}, five minutes apart."""
+        detector, state, events = qp.Detector(), {}, []
+        anchor = T0 + 3 * DAY
+        fps = {"a": FP_A, "b": FP_B}
+        for i in range(max(len(levels) for levels in plan.values())):
+            for label, levels in plan.items():
+                weekly, scoped = levels[min(i, len(levels) - 1)]
+                rows = cp.normalise_usage(
+                    usage_payload(weekly=weekly, scoped=scoped, weekly_resets=anchor), label,
+                    start + 300 * i, plan_type="team" if label == "a" else "max",
+                    account_fp=fps[label],
+                )
+                events += cp.observe_rows(detector, rows, state)
+        return events
+
     def codex_polls(self, before=80):
         detector, events = qp.Detector(), []
         for i, level in enumerate((before, 0, 0)):
@@ -381,6 +397,95 @@ class CodexTwoAccountFlowTests(FlowCase):
         self.assertEqual(self.observations(data, "openai"), [])
         self.notify(T0 + 65 + HOLD)
         self.assertEqual(self.mails(), [])
+
+
+class OneResetOneIncidentFlowTests(FlowCase):
+    """A vendor reset clears every window it touches; it is still one mail.
+
+    Review case [14]: the per-model weekly window cleared one poll after
+    weekly_all on both Claude accounts, each window family formed its own
+    pair, and every subscriber got two identical "not announced yet" mails
+    under two probe keys. Pairing is now judged on the primary weekly window
+    alone (attribution.PAIRING_FAMILIES).
+    """
+
+    def setUp(self):
+        super().setUp()
+        health = json.loads((self.state / "probe_health.json").read_text())
+        health["codex:b"] = {**health["codex"], "label": "codex:b"}
+        (self.state / "probe_health.json").write_text(json.dumps(health))
+
+    def mailed_once_per_recipient(self, vendor, at):
+        data = self.build(at)
+        rows = self.observations(data, vendor)
+        self.notify(at)
+        self.build(at + 300)
+        self.notify(at + 300)
+        return rows
+
+    def test_a_scoped_window_clearing_a_poll_later_is_not_a_second_incident(self):
+        self.export("anthropic", self.claude_window_polls({
+            "a": [(48, 55), (0, 55), (0, 0), (0, 0), (0, 0)],
+            "b": [(60, 40), (0, 40), (0, 0), (0, 0), (0, 0)],
+        }))
+        rows = self.mailed_once_per_recipient("anthropic", T0 + 600 + HOLD + 600)
+        self.assertEqual([r["verdict"] for r in rows], ["vendor_reset", "vendor_reset"])
+        self.assertEqual({r["incident_key"] for r in rows},
+                         {probe_incident_key("anthropic", "weekly", T0)})
+        self.assertEqual(sum("status" in r for r in rows), 1)
+        self.assertEqual(
+            [m["subject"] for m in self.mails()],
+            ["Claude Code: weekly limits reset on two of our accounts — not announced yet"] * 2,
+        )
+        self.assertEqual(len({key for key, *_ in self.deliveries()}), 1)
+
+    def test_a_pair_at_its_limit_publishes_nothing_through_a_scoped_window(self):
+        # Review case [12]: both weekly_all windows at the limit, the per-model
+        # ones well below, all cleared together.
+        self.export("anthropic", self.claude_window_polls({
+            "a": [(100, 19), (0, 0), (0, 0)],
+            "b": [(97, 38), (0, 0), (0, 0)],
+        }))
+        rows = self.mailed_once_per_recipient("anthropic", T0 + 600 + HOLD)
+        self.assertEqual(rows, [])
+        self.assertEqual(self.mails(), [])
+
+    def test_codex_s_secondary_window_is_not_a_second_incident(self):
+        detector, events = qp.Detector(), []
+        accounts = (("a", "placeholder-account-a", "pro", 0), ("b", "placeholder-account-b", "prolite", 5))
+        for i in range(4):
+            for account, account_id, plan, offset in accounts:
+                moment = T0 + 60 * i + offset
+
+                def window(level, cleared_at):
+                    return {
+                        "usedPercent": level if i < cleared_at else 0, "windowDurationMins": 10080,
+                        "resetsAt": T0 + 3 * DAY if i < cleared_at else moment + 7 * DAY,
+                    }
+
+                result = {
+                    "accountId": account_id,
+                    "rateLimitsByLimitId": {
+                        "codex": {"limitId": "codex", "planType": plan,
+                                  "primary": window(70, 1), "secondary": None},
+                        # The secondary limit clears one poll later.
+                        "codex_bengalfox": {"limitId": "codex_bengalfox", "planType": plan,
+                                            "primary": window(40, 2), "secondary": None},
+                    },
+                    "rateLimitResetCredits": {"availableCount": 0, "credits": []},
+                }
+                for row in qp.normalise(result, moment, account):
+                    events += detector.observe(row)
+        clears = [e for e in events if e.get("kind") == "clear"]
+        self.assertEqual({e["window_family"] for e in clears},
+                         {"codex/10080", "codex_bengalfox/10080"})
+        self.export("openai", events)
+        rows = self.mailed_once_per_recipient("openai", T0 + 125 + HOLD + 300)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["incident_key"] for r in rows},
+                         {probe_incident_key("openai", "weekly", T0)})
+        self.assertEqual(len(self.mails()), 2)
+        self.assertEqual(len({key for key, *_ in self.deliveries()}), 1)
 
 
 class SingleAccountFlowTests(FlowCase):

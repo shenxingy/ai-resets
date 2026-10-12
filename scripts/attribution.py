@@ -50,6 +50,17 @@ PAIR_WINDOW_SECONDS = 60 * 60
 # accounts reset together is what an owner short of quota does.
 AT_LIMIT_PERCENT = 95.0
 
+# The only windows a pair may form on: each vendor's PRIMARY weekly window,
+# as the probes name it (quota_probe.window_family() for Codex's base limit,
+# claude_probe.window_key() for Claude's all-models window;
+# tests/test_attribution.py asserts both spellings). A vendor reset clears the
+# per-model and secondary weekly windows too (`weekly_scoped:<model>`,
+# Codex's `codex_bengalfox`), often a poll apart, and each of those pairing
+# on its own made one reset two incidents and two mails. They also let a pair
+# both at its limit on the primary window escape AT_LIMIT_PERCENT through a
+# scoped window that was not. One reset, one window it is judged on.
+PAIRING_FAMILIES = frozenset({"codex/10080", "weekly_all"})
+
 # What attribute() stamps on a clear it upgrades. Every one of these is
 # removed from the input first, so a value already on a record can never
 # survive into the output on its own say-so.
@@ -103,7 +114,9 @@ def is_candidate(event: Any, retracted: set[str]) -> bool:
     to be on record on both sides and unchanged — a legacy row with no
     fingerprint never pairs, because "a different account" is exactly what
     this rule cannot assume. A record with no event id cannot be named as
-    anyone's witness, so it cannot be one.
+    anyone's witness, so it cannot be one. Only a clear on a PAIRING_FAMILIES
+    window qualifies: a per-model or secondary window stays `unattributed`
+    and private whatever the other account's did.
     """
     if not isinstance(event, dict) or not _is_clear(event):
         return False
@@ -115,7 +128,10 @@ def is_candidate(event: Any, retracted: set[str]) -> bool:
     after = _text(event.get("account_fp_after"))
     if after is None or _text(event.get("account_fp_before")) != after:
         return False
-    if _text(event.get("account")) is None or _text(event.get("window_family")) is None:
+    if _text(event.get("account")) is None:
+        return False
+    # _text first: a malformed (unhashable) value must read as "not one".
+    if _text(event.get("window_family")) not in PAIRING_FAMILIES:
         return False
     return _epoch(event.get("clear_bracket_hi")) is not None
 
