@@ -1008,6 +1008,28 @@ class LocalTraceTests(StateDirTest):
             self.feed(0, T0 + 1200, session=0)
         self.assertEqual(read.call_count, 1)
 
+    def test_an_anchor_jump_clear_names_its_blind_gap_not_a_wide_bracket(self):
+        # Recovered across a 600 s gap: inside the 900 s three-poll bracket by
+        # width, but recovered, so the bracket check fails all the same. The
+        # reason is re-written here after the history is read, and it has to
+        # say why; "bracketed by more than three polls" of 600 s is false.
+        history_file(self.history["a"], [])
+        events = []
+        for weekly, t, resets in ((48, T0, self.ANCHOR), (20, T0 + 600, self.ANCHOR + 7 * DAY)):
+            rows = cp.normalise_usage(
+                usage_payload(weekly=weekly, weekly_resets=resets), "a", t,
+                plan_type="max", account_fp=FP,
+            )
+            events += cp.observe_rows(self.detector, rows, self.claude_state)
+        (event,) = [e for e in events if e.get("limit_kind") == "weekly_all"]
+        self.assertEqual(event["confirmed_by"], "anchor_jump")
+        self.assertEqual(event["clear_bracket_hi"] - event["clear_bracket_lo"], 600)
+        self.assertEqual(event["checks"]["bracket"], "wide")
+        self.assertEqual(event["checks"]["local_trace"], "none")
+        self.assertEqual(event["classification"], qp.CLASS_GLOBAL)
+        self.assertIn("recovered across a 600s blind gap (anchor_jump)", event["reason"])
+        self.assertNotIn("more than three polls", event["reason"])
+
     def test_a_check_that_could_not_run_is_named_alongside_the_trace(self):
         history_file(self.history["a"], [])
         event = self.early_clear(fp=None)[0]
