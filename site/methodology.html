@@ -32,7 +32,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,600&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://resets.alexshen.dev/methodology.html","name":"Methodology & Sources — AI Reset Watch","url":"https://resets.alexshen.dev/methodology.html","dateModified":"2026-10-11","isPartOf":{"@id":"https://resets.alexshen.dev/#website"},"about":{"@id":"https://resets.alexshen.dev/#dataset"}},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does AI Reset Watch know when provider systems actually reset?","acceptedAnswer":{"@type":"Answer","text":"Only for our own accounts. Probes on two Codex accounts and two Claude Code accounts read those accounts\u2019 own usage windows and can say whether a window expired on schedule or cleared early. One account cannot tell a provider reset from one its holder paid for, so an early clear counts as the provider\u2019s reset only with a second witness: another of our accounts clearing the same window within the hour, or a verified provider post saying a reset happened, posted between an hour before and three hours after the clear. Everything else is linked public announcements. No provider telemetry or internal execution time is visible to this site."}},{"@type":"Question","name":"Are the timing patterns predictions?","acceptedAnswer":{"@type":"Answer","text":"No. Weekday and time-of-day views are descriptive summaries of tracked public announcement timestamps in Pacific Time. Small samples and missing announcements can create apparent clusters."}},{"@type":"Question","name":"Is AI Reset Watch affiliated with Anthropic, OpenAI, or Google?","acceptedAnswer":{"@type":"Answer","text":"No. AI Reset Watch is independently maintained and unaffiliated with the providers it tracks."}}]}]}
+  {"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://resets.alexshen.dev/methodology.html","name":"Methodology & Sources — AI Reset Watch","url":"https://resets.alexshen.dev/methodology.html","dateModified":"2026-10-11","isPartOf":{"@id":"https://resets.alexshen.dev/#website"},"about":{"@id":"https://resets.alexshen.dev/#dataset"}},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does AI Reset Watch know when provider systems actually reset?","acceptedAnswer":{"@type":"Answer","text":"Only for our own accounts. Probes read the usage windows of the operator\u2019s own Claude Code and Codex accounts, and can say whether a window expired on schedule or cleared early. One account cannot tell a provider reset from one its holder paid for, so an early clear counts as the provider\u2019s reset only with a second witness: another of our accounts clearing the same weekly window within the hour, or a verified provider post saying a reset happened, posted between an hour before and three hours after the clear. Each provider\u2019s coverage sentence says which of our accounts are being read now. Everything else is linked public announcements. No provider telemetry or internal execution time is visible to this site, and no observation here describes any account but ours."}},{"@type":"Question","name":"Are the timing patterns predictions?","acceptedAnswer":{"@type":"Answer","text":"No. Weekday and time-of-day views are descriptive summaries of tracked public announcement timestamps in Pacific Time. Small samples and missing announcements can create apparent clusters."}},{"@type":"Question","name":"Is AI Reset Watch affiliated with Anthropic, OpenAI, or Google?","acceptedAnswer":{"@type":"Answer","text":"No. AI Reset Watch is independently maintained and unaffiliated with the providers it tracks."}}]}]}
   </script>
 </head>
 <body>
@@ -64,7 +64,7 @@
 
       <section id="ground-truth">
         <h2>Account recovery is not a provider-wide reset</h2>
-        <p>Our probes read the usage windows of two Codex accounts and two Claude Code accounts that the operator holds. When a window that was in use drops to zero, the probe knows when that happened on that account. It does not know who caused it, or which other users were affected.</p>
+        <p>Our probes read the usage windows of Claude Code and Codex accounts that the operator holds. Each provider’s coverage sentence names the accounts and windows being read now: it is in that provider’s <code>probe</code> block in <a href="/data.json">data.json</a>, and under its own-account readings on the homepage whenever there are any. When a window that was in use drops to zero, the probe knows when that happened on that account. It does not know who caused it, or which other users were affected.</p>
         <h3>What one account can rule out</h3>
         <p>Before an early clear counts for anything, the probe checks every cause on the account holder’s side that it can see:</p>
         <ul>
@@ -79,7 +79,7 @@
         <p>An early clear counts as the provider’s reset only when something independent of that account agrees:</p>
         <dl>
           <dt><strong>Another of our accounts</strong></dt>
-          <dd>A second, separate account of ours, with the same checks passed, cleared the same window within an hour. Both clears are shown, each naming the other as its witness. If both were at 95% or more of their limit beforehand, they stay private: that is exactly when an account holder would pay to reset.</dd>
+          <dd>A second, separate account of ours, with the same checks passed, cleared the same main weekly window within an hour: the weekly limit for Codex, the all-models weekly limit for Claude. Narrower weekly limits that clear with it, such as a per-model limit, never form a pair of their own. Both clears are shown, each naming the other as its witness. If both were at 95% or more of their limit beforehand, they stay private: that is exactly when an account holder would pay to reset. While only one of our accounts is read for a provider, this witness cannot occur there, and its coverage sentence names one account.</dd>
           <dt><strong>The provider’s own post</strong></dt>
           <dd>A verified post from a reviewed official or staff account says a reset already happened, and it was posted between one hour before and three hours after the clear. The announcement is then marked as seen on our account, with the time. The single account’s clear is not shown as a row of its own.</dd>
         </dl>
@@ -100,7 +100,7 @@
         <p>Old probe logs carry no account fingerprint, so exporting them again can never turn one of their clears into a witness of either kind. Official announcements remain visible with the scope stated by their source.</p>
         <h3>What the probes can establish</h3>
         <ul>
-          <li><strong>Readings, not fleet coverage.</strong> The probes measure two Codex accounts and two Claude accounts. Google has no active probe. A freshness badge describes the last successful reading, not verification of a provider-wide reset.</li>
+          <li><strong>Readings, not fleet coverage.</strong> The probes measure only the operator’s own Claude Code and Codex accounts, and each provider’s coverage sentence says which. Google has no active probe. A freshness badge describes the last successful reading, not verification of a provider-wide reset.</li>
           <li><strong>Detection limits.</strong> Windows with less than a 10-point usage drop may not show a detectable clear. Missing readings mean unknown, not that nothing happened.</li>
           <li><strong>Arrival timing.</strong> A clear is bracketed by the readings either side of it. That interval is not the time a provider started or completed a rollout.</li>
           <li><strong>No redemption during monitoring.</strong> Probes read quota metadata without spending reset credits.</li>
@@ -128,12 +128,12 @@
 
       <section id="faq">
         <h2>Frequently asked questions</h2>
-        <h3>Does the site know when provider systems actually reset?</h3>
-        <p>Only for our own accounts. Probes on two Codex accounts and two Claude Code accounts measure those accounts’ own usage windows and can say whether a window expired on schedule or cleared early. One account cannot tell a provider reset from one its holder paid for, so an early clear counts as the provider’s reset only with a second witness: another of our accounts clearing the same window within the hour, or a verified provider post saying a reset happened, posted between an hour before and three hours after the clear. Everything else is public announcements. No provider telemetry is visible to this site, and no observation here describes any account but ours.</p>
-        <h3>Are timing patterns predictions?</h3>
-        <p>No. They summarize tracked announcement timestamps and are explicitly limited by sample size and coverage.</p>
-        <h3>Is this affiliated with Anthropic, OpenAI, or Google?</h3>
-        <p>No. AI Reset Watch is independently maintained and unaffiliated.</p>
+        <h3>Does AI Reset Watch know when provider systems actually reset?</h3>
+        <p>Only for our own accounts. Probes read the usage windows of the operator’s own Claude Code and Codex accounts, and can say whether a window expired on schedule or cleared early. One account cannot tell a provider reset from one its holder paid for, so an early clear counts as the provider’s reset only with a second witness: another of our accounts clearing the same weekly window within the hour, or a verified provider post saying a reset happened, posted between an hour before and three hours after the clear. Each provider’s coverage sentence says which of our accounts are being read now. Everything else is linked public announcements. No provider telemetry or internal execution time is visible to this site, and no observation here describes any account but ours.</p>
+        <h3>Are the timing patterns predictions?</h3>
+        <p>No. Weekday and time-of-day views are descriptive summaries of tracked public announcement timestamps in Pacific Time. Small samples and missing announcements can create apparent clusters.</p>
+        <h3>Is AI Reset Watch affiliated with Anthropic, OpenAI, or Google?</h3>
+        <p>No. AI Reset Watch is independently maintained and unaffiliated with the providers it tracks.</p>
       </section>
 
       <section id="corrections">

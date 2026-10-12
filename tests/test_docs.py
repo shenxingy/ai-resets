@@ -137,5 +137,40 @@ class BacktestTableTests(unittest.TestCase):
                 self.assertTrue(case["clear_at"][:10] in line, f"bottom line: {line}")
 
 
+# ─── The methodology page ───────────────────────────────────────────────────
+
+# A count of Codex accounts, in any spelling the page could use. The page is
+# published from the checkout every five minutes, while the second Codex
+# account is read only once the probe unit is reinstalled: a number here is
+# false on one side of that step. The coverage sentence says what is live.
+CODEX_COUNT = re.compile(
+    r"\b(?:one|two|three|four|both|\d+)\s+(?:of\s+our\s+)?Codex\s+(?:\w+\s+)?accounts?\b",
+    re.I,
+)
+
+
+class MethodologyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.page = read("site/methodology.html")
+        cls.text = visible_text(cls.page)
+
+    def test_no_count_of_codex_accounts_is_stated_as_fact(self):
+        for where, text in [("page", self.text)] + [
+            (question, answer) for question, answer in json_ld_faq(self.page)
+        ]:
+            with self.subTest(where=where):
+                self.assertIsNone(CODEX_COUNT.search(text))
+
+    def test_it_says_where_the_live_count_is_published(self):
+        self.assertTrue("coverage sentence" in self.text, "the page never names it")
+        self.assertIn("coverage sentence", json_ld_faq(self.page)[0][1])
+
+    def test_the_structured_faq_is_the_visible_faq(self):
+        # The answer search engines show is the answer on the page: two copies
+        # of one claim are how one of them kept "two Codex accounts".
+        self.assertEqual(json_ld_faq(self.page), visible_faq(self.page))
+
+
 if __name__ == "__main__":
     unittest.main()

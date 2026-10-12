@@ -124,7 +124,7 @@ scripts/
   fetch_openai.py     pulls a public reset-tracking API
   fetch_anthropic.py  pulls a public reset-tracking site, verifies each post
   discover_posts.py   announcement discovery
-  quota_probe.py      ground truth: our two Codex accounts' own quota
+  quota_probe.py      ground truth: our Codex accounts' own quota (b when configured)
   claude_probe.py     ground truth: our two Claude accounts' own quota
   antigravity_probe.py  ground truth for Google (needs one interactive login)
   attribution.py      the two-account rule: when a clear is the vendor's
