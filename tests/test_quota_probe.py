@@ -2163,6 +2163,20 @@ class ExportTest(unittest.TestCase):
         self.assertTrue(first["retracted"])
         self.assertFalse(second["public"])
 
+    def test_a_retracted_natural_expiry_is_withheld_too(self):
+        # The case above is a global_candidate, private before the retraction
+        # check is reached, so is_public() could ignore retractions with the
+        # suite green. A scheduled expiry is the clear that IS public until
+        # withdrawn: the control publishes it, the retraction must not.
+        natural = clear_event("n", qp.CLASS_NATURAL)
+        (alone,) = self.export([natural])["observations"]
+        self.assertTrue(alone["public"])
+        withdrawn = {**natural, "kind": qp.EVENT_RETRACTION, "confirmed": False}
+        first, second = self.export([natural, withdrawn])["observations"]
+        self.assertTrue(first["retracted"])
+        self.assertFalse(first["public"])
+        self.assertFalse(second["public"])
+
     def test_the_original_event_fields_are_carried_through(self):
         payload = self.export([clear_event()])
         observation = payload["observations"][0]

@@ -1461,6 +1461,36 @@ class CycleTests(StateDirTest):
 # ─── The loop, and what it hands to systemd ──────────────────────────────────
 
 
+class RetractedPublicityTests(StateDirTest):
+    """A clear we have withdrawn is never published (cp.is_public, gate 3)."""
+
+    def test_a_retracted_weekly_natural_expiry_is_withheld(self):
+        # Only a natural expiry or a paired clear gets as far as the
+        # retraction check; every case on file was private before it, so the
+        # check could be dropped with the suite green.
+        clear = {
+            "event_id": "claude:a:weekly_all/10080:1788700300", "kind": qp.EVENT_CLEAR,
+            "slot": "claude:a:weekly_all/10080", "limit_id": "claude:a:weekly_all",
+            "limit_kind": "weekly_all", "window_minutes": WEEK_MINUTES, "account": "a",
+            "detected_at": T0 + 300, "clear_bracket_lo": T0, "clear_bracket_hi": T0 + 300,
+            "used_before": 48.0, "used_after": 0.0, "early_by_seconds": -60,
+            "prior_active_resets_at": T0 + 240, "classification": qp.CLASS_NATURAL,
+            "confirmed": True,
+        }
+        withdrawn = {**clear, "kind": qp.EVENT_RETRACTION, "confirmed": False,
+                     "reverted_at": T0 + 900, "used_at_revert": 48.0}
+        out = self.state / "anthropic.json"
+        for events, public in (([clear], True), ([clear, withdrawn], False)):
+            with self.subTest(retracted=len(events) > 1):
+                cp.EVENTS_FILE.write_text(
+                    "".join(json.dumps(e) + "\n" for e in events), encoding="utf-8"
+                )
+                cp.export_observations(out, now=T0 + 1200)
+                rows = json.loads(out.read_text())["observations"]
+                (row,) = [r for r in rows if r.get("kind") == qp.EVENT_CLEAR]
+                self.assertEqual(row["public"], public)
+
+
 class RunLoopTests(StateDirTest):
     def setUp(self):
         super().setUp()
