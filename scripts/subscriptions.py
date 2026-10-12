@@ -83,10 +83,13 @@ def site_public_url() -> str:
 # history: the Anthropic feed alone would have sent 11 events x 7 subscribers.
 MAX_NOTIFY_AGE_SECONDS = 48 * 3600
 
-# More than this many mailable events appearing in a single run is a symptom
-# (a re-keyed upstream feed, a backfill, a new source), not a busy news day.
-# The whole batch is held rather than trimmed to the cap: choosing three of
-# eight to send would be worse than sending none and saying so.
+# More than this many mailable INCIDENTS appearing in a single run is a
+# symptom (a re-keyed upstream feed, a backfill, a new source), not a busy news
+# day. The whole batch is held rather than trimmed to the cap: choosing three
+# of eight to send would be worse than sending none and saying so. Counted in
+# incidents, not rows: one incident is one mail per subscriber however many
+# rows carry it, and counting rows held three resets in one refresh because
+# one of them sat on two rows (review case [16]).
 FLOOD_CAP = 3
 
 # The deployed feed is rebuilt every five minutes; if the notifier is reading
@@ -577,7 +580,7 @@ def plan_discovery(
         historical=tuple(historical),
         undatable=tuple(undatable),
         ripened=tuple(ripened),
-        flooded=len(mailable) > flood_cap,
+        flooded=len({incident_key(event) for event in mailable}) > flood_cap,
         silent=tuple(silent),
         adoptions=plan_adoptions(
             events, stored_by_event or {}, known_incidents or set()
@@ -2510,14 +2513,15 @@ def run_notifier(
             + ", ".join(event["event_key"] for event in plan.undatable[:10])
         )
     if plan.flooded:
+        held = sorted({incident_key(event) for event in plan.mailable})
         print(
-            f"FLOOD HELD n={len(plan.mailable)} (cap {FLOOD_CAP}): "
-            + ", ".join(event["event_key"] for event in plan.mailable)
+            f"FLOOD HELD n={len(held)} (cap {FLOOD_CAP}): "
+            + ", ".join(held)
             + " — release with `subscriptions.py notify --release`"
         )
         app.store.open_alert(
             "deliveries:flood-held",
-            f"{len(plan.mailable)} events arrived in one refresh and are held unsent.",
+            f"{len(held)} incidents arrived in one refresh and are held unsent.",
         )
 
     # A follow-up is decided before the send loop so it can go out on the same

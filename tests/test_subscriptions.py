@@ -545,6 +545,31 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertFalse(plan.flooded)
         self.assertEqual(len(self.store.pending_deliveries()), FLOOD_CAP * 2)
 
+    def test_the_cap_counts_incidents_not_the_rows_that_carry_them(self):
+        # Review case [16]: three resets in one refresh, one of them on two
+        # status rows, was read as four and held. One incident is one mail
+        # per subscriber however many rows carry it.
+        self.baseline()
+        shared = "anthropic:probe-weekly-100"
+        batch = [
+            event("openai:1", "openai"),
+            event("openai:2", "openai"),
+            event("anthropic:obs-a", "anthropic", status="observed", incident_key=shared),
+            event("anthropic:obs-b", "anthropic", status="observed", incident_key=shared),
+        ]
+        plan = self.store.discover_events(batch, now=NOW)
+        self.assertEqual(len(plan.mailable), FLOOD_CAP + 1)
+        self.assertFalse(plan.flooded)
+        self.assertEqual(self.store.held_deliveries(), [])
+        self.assertEqual(len({row["incident_key"] for row in self.store.pending_deliveries()}),
+                         FLOOD_CAP)
+        # One more incident is over the cap, and the whole batch is held.
+        plan = self.store.discover_events(
+            [event(f"openai:{index}", "openai") for index in range(10, 10 + FLOOD_CAP + 1)],
+            now=NOW,
+        )
+        self.assertTrue(plan.flooded)
+
     def test_release_moves_held_deliveries_into_the_queue_once(self):
         self.baseline()
         self.store.discover_events(
