@@ -76,7 +76,9 @@ That guards against a single glitched read only; it cannot cover the
 12h41m, then reverted to 92% ON ITS ORIGINAL ANCHOR. That shape is caught
 after the fact by the retraction path: a confirmed clear stays under watch
 while the window reads idle, and usage returning on the ORIGINAL anchor (or
-snapping back to its pre-clear level) retracts it. Usage returning on a NEW
+snapping back to its pre-clear level) retracts it, once REVERT_POLLS reads in
+a row say so. One read is not enough: the vendor served exactly that shape
+from a stale replica for a single poll on 2026-09-09. Usage returning on a NEW
 anchor is the opposite signal — the window really was re-anchored — and
 closes the watch. Before this distinction existed the detector retracted
 the 2026-09-02 clear 79 polls after confirming it, because the account
@@ -167,6 +169,21 @@ NATURAL_GRACE_SECONDS = 2 * POLL_SECONDS + 60
 
 # Consecutive confirming reads required before a clear is trusted.
 CONFIRM_POLLS = 2
+
+# Consecutive revert reads required before a clear is withdrawn. The vendor
+# serves stale replica reads: on 2026-09-09 account a read 92% on 1789191176,
+# the anchor in force before its 09-08 clear, for ONE poll at 18:13:40 UTC and
+# was back on the post-clear anchor at 18:14:40. That is the exact revert
+# signature, so had the cleared window still been idle, one such read would
+# have retracted a real reset, broken its pair and mailed a correction for it.
+# The 2026-08-03 revert held for good, so a second read costs it one poll. Any
+# read in between that is not a revert starts the count again. What two reads
+# cannot absorb: earlier that day the log holds 92% at 16:56:40 and nothing
+# until 17:40:40, and it cannot say whether that was one read and a blind gap
+# or 44 stale reads in a row. Replayed from the sample log, which writes a row
+# only when a value moves, a held revert is one row until usage moves again,
+# so a replay retracts at the next row that moved.
+REVERT_POLLS = 2
 
 # The server rounds resets_at; the same frozen anchor has been read as
 # 1788649350 and 1788649351 on consecutive polls. Two anchors closer than
@@ -1114,7 +1131,12 @@ class Detector:
             rebaseline(state)
             previous = None
 
-        if previous is not None and is_clear(previous, row):
+        pending = state.get("pending")
+        # A revert read held for a second opinion is now `previous`, at the
+        # pre-clear level. The idle read after it is the watch carrying on,
+        # not a fresh clear from that stale level under a new event id.
+        holding = isinstance(pending, dict) and isinstance(pending.get("revert_read"), dict)
+        if previous is not None and not holding and is_clear(previous, row):
             anchor_before = state.get("active_anchor")
             state["pending"] = {
                 **self._clear_record(state, key, previous, row),
@@ -1129,6 +1151,12 @@ class Detector:
             # A credit reading that arrives after the clear can still correct
             # it, as long as the clear has not been published yet.
             self._refresh_pending_credits(state, pending, row)
+            reverted = is_revert(pending, row)
+            if not reverted:
+                # Only CONSECUTIVE revert reads withdraw a clear (REVERT_POLLS):
+                # an idle read or resumed usage in between starts the count
+                # again.
+                pending.pop("revert_read", None)
             if row["used_percent"] <= CLEAR_FLOOR:
                 # Still idle: keep counting, and keep the watch open even
                 # after confirmation so a 2026-08-03 style revert hours
@@ -1139,21 +1167,44 @@ class Detector:
                     pending["confirmed_at"] = row["t"]
                     pending["confirmed_by"] = "held_at_floor"
                     events.append(dict(pending))
-            elif is_revert(pending, row):
-                # The 2026-08-03 shape: a clear that un-happened. Emitted
-                # whether or not the clear was already confirmed; the shared
-                # event_id lets a consumer supersede the earlier record.
-                events.append(
-                    {
-                        **pending,
-                        "kind": EVENT_RETRACTION,
-                        "confirmed": False,
-                        "reverted_at": row["t"],
-                        "used_at_revert": row["used_percent"],
-                        "resets_at_at_revert": row.get("resets_at"),
+            elif reverted:
+                # The 2026-08-03 shape: a clear that un-happened, once it has
+                # been read REVERT_POLLS times in a row. The first read is
+                # kept, because it is when usage came back; the read that
+                # completes the count is only when we believed it.
+                held = pending.get("revert_read")
+                if not isinstance(held, dict):
+                    held = {
+                        "t": row["t"],
+                        "used_percent": row["used_percent"],
+                        "resets_at": row.get("resets_at"),
+                        "reads": 0,
                     }
-                )
-                state["pending"] = None
+                held = {**held, "reads": int(held.get("reads") or 0) + 1}
+                if held["reads"] < REVERT_POLLS:
+                    pending["revert_read"] = held
+                    log(
+                        f"REVERT READ held {key} {row['used_percent']:.0f}% on anchor "
+                        f"{row.get('resets_at')}: retracted only if the next read agrees"
+                    )
+                else:
+                    # Emitted whether or not the clear was already confirmed;
+                    # the shared event_id lets a consumer supersede the
+                    # earlier record.
+                    record = {k: v for k, v in pending.items() if k != "revert_read"}
+                    events.append(
+                        {
+                            **record,
+                            "kind": EVENT_RETRACTION,
+                            "confirmed": False,
+                            "reverted_at": held["t"],
+                            "used_at_revert": held["used_percent"],
+                            "resets_at_at_revert": held["resets_at"],
+                            "revert_reads": held["reads"],
+                            "revert_confirmed_at": row["t"],
+                        }
+                    )
+                    state["pending"] = None
             else:
                 # Usage resumed without a revert. On a re-anchoring contract
                 # (Codex) that is stronger evidence than a second idle read:

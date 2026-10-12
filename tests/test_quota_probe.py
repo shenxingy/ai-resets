@@ -405,13 +405,21 @@ class DetectorTest(unittest.TestCase):
         for i in range(1, 20):  # idle reads drift to t + window
             events.extend(d.observe(sample(60 * i, 0, 60 * i + WEEK_SECONDS)))
         self.assertEqual([e["kind"] for e in events], [qp.EVENT_CLEAR])
-        retractions = d.observe(sample(60 * 20, 92, anchor))
+        # The first revert read is held (REVERT_POLLS): the vendor served this
+        # very shape from a stale replica for one poll on 2026-09-09. A revert
+        # that holds, as this one did, is withdrawn a poll later.
+        self.assertEqual(d.observe(sample(60 * 20, 92, anchor)), [])
+        retractions = d.observe(sample(60 * 21, 92, anchor))
         self.assertEqual(len(retractions), 1)
         self.assertEqual(retractions[0]["kind"], qp.EVENT_RETRACTION)
         self.assertFalse(retractions[0]["confirmed"])
         self.assertEqual(retractions[0]["event_id"], events[0]["event_id"])
+        # When usage came back, not when the second read agreed.
         self.assertEqual(retractions[0]["reverted_at"], 60 * 20)
+        self.assertEqual(retractions[0]["revert_confirmed_at"], 60 * 21)
+        self.assertEqual(retractions[0]["revert_reads"], 2)
         self.assertEqual(retractions[0]["used_at_revert"], 92.0)
+        self.assertNotIn("revert_read", retractions[0])
         self.assertIsNone(d.slots["codex/10080"]["pending"])
 
     def test_usage_resuming_on_a_new_anchor_before_the_second_idle_read_confirms(self):
@@ -434,7 +442,8 @@ class DetectorTest(unittest.TestCase):
         d.observe(sample(0, 91, 1_000_000))
         d.observe(sample(60, 0, 1_000_000))
         clear = d.observe(sample(120, 0, 120 + WEEK_SECONDS))[0]
-        retraction = d.observe(sample(180, 92, 1_000_000))[0]
+        self.assertEqual(d.observe(sample(180, 92, 1_000_000)), [])  # held
+        retraction = d.observe(sample(240, 92, 1_000_000))[0]
         self.assertEqual(clear["event_id"], "codex/10080:60")
         self.assertEqual(retraction["event_id"], clear["event_id"])
 
@@ -456,7 +465,10 @@ class DetectorTest(unittest.TestCase):
         anchor = 1_000_000
         d.observe(sample(0, 91, anchor))
         d.observe(sample(60, 0, anchor))
-        events = d.observe(sample(120, 92, anchor))
+        # An unconfirmed clear waits for the second revert read too: the one
+        # rule is simpler to reason about than a rule per confirmation state.
+        self.assertEqual(d.observe(sample(120, 92, anchor)), [])
+        events = d.observe(sample(180, 92, anchor))
         self.assertEqual(len(events), 1)
         self.assertFalse(events[0]["confirmed"])
         self.assertEqual(events[0]["reverted_at"], 120)
@@ -475,10 +487,26 @@ class DetectorTest(unittest.TestCase):
         d = qp.Detector()
         d.observe(sample(0, 40, 500_000))
         d.observe(sample(60, 0, 60 + WEEK_SECONDS))
-        d.observe(sample(120, 55, 900_000))
+        d.observe(sample(120, 25, 900_000))
         state = d.slots["codex/10080"]
         self.assertIsNone(state["pending"])
         self.assertEqual(state["active_anchor"], 900_000)
+
+    def test_a_snap_back_resets_the_anchor_and_clears_pending_on_its_second_read(self):
+        # The case above used to read 55%, which is a snap-back to the 40%
+        # held before the clear (is_revert), so it was a single-read
+        # retraction all along. Under REVERT_POLLS the first such read is held
+        # with the watch still open; the second withdraws the clear.
+        d = qp.Detector()
+        d.observe(sample(0, 40, 500_000))
+        d.observe(sample(60, 0, 60 + WEEK_SECONDS))
+        self.assertEqual(d.observe(sample(120, 55, 900_000)), [])
+        state = d.slots["codex/10080"]
+        self.assertEqual(state["pending"]["revert_read"]["t"], 120)
+        self.assertEqual(state["active_anchor"], 900_000)
+        events = d.observe(sample(180, 55, 900_000))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_RETRACTION])
+        self.assertIsNone(state["pending"])
 
     def test_slots_are_tracked_independently(self):
         d = qp.Detector()
@@ -500,6 +528,124 @@ class DetectorTest(unittest.TestCase):
 
     def test_first_ever_sample_produces_no_event(self):
         self.assertEqual(qp.Detector().observe(sample(0, 0, 1_000)), [])
+
+
+# ─── Stale replica reads ─────────────────────────────────────────────────────
+
+
+# The codex/10080 rows the probe wrote for account a from the last reading
+# before the 2026-09-08 01:22:36 UTC clear to 2026-09-09 18:14:40, verbatim:
+# (t, used_percent, resets_at, credits). The clear's own event names
+# 1789191176 as the anchor in force before it. On 09-09 that anchor came back
+# twice at the pre-clear 92%, each time followed by the post-clear anchor
+# again: 16:56:40 -> 17:40:40 (no row between, so one read and a blind gap or
+# 44 identical reads; the log cannot say), and 18:13:40 -> 18:14:40, provably
+# ONE read, since the polls are a minute apart. A stale replica, not the clear
+# un-happening: the account kept using the cleared window (19%) on both sides.
+LIVE_2026_09_08_CLEAR = [
+    (1788818196, 92, 1789191176, 1),  # 09-07 21:56:36, last row before the clear
+    (1788830556, 0, 1789435357, 1),  # 09-08 01:22:36, the clear
+    (1788834936, 1, 1789438339, 1),
+    (1788836020, 2, 1789438339, 1),
+    (1788836800, 3, 1789438339, 1),
+    (1788837220, 4, 1789438339, 1),
+    (1788837820, 5, 1789438339, 1),  # 03:23:40, the last idle read
+    (1788838960, 6, 1789438339, 1),  # 03:42:40, usage resumed: the watch closed
+    (1788840640, 7, 1789438339, 1),
+    (1788841420, 8, 1789438339, 1),
+    (1788841960, 9, 1789438339, 1),
+    (1788845800, 10, 1789438339, 1),
+    (1788849400, 11, 1789438339, 1),
+    (1788853120, 12, 1789438339, 1),
+    (1788910840, 13, 1789438339, 1),
+    (1788912400, 14, 1789438339, 1),
+    (1788912760, 15, 1789438339, 1),
+    (1788913540, 16, 1789438339, 1),
+    (1788934180, 17, 1789438339, 1),
+    (1788938500, 18, 1789438339, 1),
+    (1788964900, 19, 1789438339, 1),  # 09-09 14:41:40
+]
+LIVE_2026_09_09_FLAPS = [
+    [(1788973000, 92, 1789191176, 1), (1788975640, 19, 1789438339, 1)],  # 16:56:40
+    [(1788977620, 92, 1789191176, 1), (1788977680, 19, 1789438339, 1)],  # 18:13:40
+]
+PRE_CLEAR_ANCHOR = 1789191176
+
+
+class StaleReplicaTest(unittest.TestCase):
+    """One revert read is not a revert (REVERT_POLLS, 2026-09-09)."""
+
+    def replay(self, rows):
+        d = qp.Detector()
+        return d, feed(d, [sample(t, used, anchor, credits=c) for t, used, anchor, c in rows])
+
+    def test_the_2026_09_09_reads_cannot_withdraw_a_clear_still_under_watch(self):
+        # On the day the watch had closed 39 hours earlier, at 6%. This is the
+        # path the 2026-10-11 backtest named: the same reads, verbatim, landing
+        # while the cleared window still idled (the rows from 6% to 19% left
+        # out). With one read enough, each flap retracted the 09-08 clear.
+        idle = LIVE_2026_09_08_CLEAR[:7]
+        for flap in LIVE_2026_09_09_FLAPS:
+            with self.subTest(at=flap[0][0]):
+                d, events = self.replay(idle + flap)
+                self.assertEqual([e["kind"] for e in events], [qp.EVENT_CLEAR])
+                self.assertEqual(events[0]["prior_active_resets_at"], PRE_CLEAR_ANCHOR)
+                # The stale read itself is the revert signature exactly.
+                self.assertTrue(
+                    qp.is_revert(events[0], sample(flap[0][0], 92, PRE_CLEAR_ANCHOR))
+                )
+                # 19% on the post-clear anchor is usage resuming: watch closed.
+                self.assertIsNone(d.slots["codex/10080"]["pending"])
+
+    def test_one_stale_read_while_idle_leaves_the_clear_and_its_id_alone(self):
+        # The backtest's scratch scenario: confirmed clear, idling at 2%, one
+        # read of the pre-clear level on the pre-clear anchor at minute 200.
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS)])
+        clear = d.observe(sample(120, 2, 120 + WEEK_SECONDS))[0]
+        self.assertTrue(clear["confirmed"])
+        self.assertEqual(d.observe(sample(60 * 200, 80, old)), [])
+        # The idle read after it is neither a retraction nor a fresh 80 -> 2
+        # clear under a new id (which would re-key a live incident).
+        self.assertEqual(d.observe(sample(60 * 201, 2, 60 * 201 + WEEK_SECONDS)), [])
+        pending = d.slots["codex/10080"]["pending"]
+        self.assertEqual(pending["event_id"], clear["event_id"])
+        self.assertNotIn("revert_read", pending)
+
+    def test_a_read_between_two_revert_reads_starts_the_count_again(self):
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS),
+                 sample(120, 0, 120 + WEEK_SECONDS)])
+        rows = [
+            sample(180, 80, old),                     # revert, held
+            sample(240, 0, 240 + WEEK_SECONDS),       # idle: count restarts
+            sample(300, 80, old),                     # revert, held again
+            sample(360, 1, 360 + WEEK_SECONDS),       # idle
+            sample(420, 92, old),                     # revert, held
+        ]
+        self.assertEqual(feed(d, rows), [])
+        events = d.observe(sample(480, 92, old))      # ...and held: withdrawn
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_RETRACTION])
+        self.assertEqual(events[0]["reverted_at"], 420)
+
+    def test_a_held_read_survives_a_restart(self):
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS),
+                 sample(120, 0, 120 + WEEK_SECONDS), sample(180, 80, old)])
+        restored = qp.Detector(json.loads(json.dumps(d.cursor())))
+        events = restored.observe(sample(240, 80, old))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_RETRACTION])
+        self.assertEqual(events[0]["reverted_at"], 180)
+
+    def test_a_held_read_is_logged_for_the_owner(self):
+        d = qp.Detector()
+        feed(d, [sample(0, 80, 1_000_000), sample(60, 0, 60 + WEEK_SECONDS)])
+        with captured_log() as out:
+            d.observe(sample(120, 80, 1_000_000))
+        self.assertIn("REVERT READ held codex/10080 80%", out.getvalue())
 
 
 # ─── Sample de-duplication ───────────────────────────────────────────────────

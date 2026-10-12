@@ -665,6 +665,42 @@ class PairingTest(unittest.TestCase):
         self.assertEqual(by_account["b"]["witness"], by_account["a"]["event_id"])
         self.assertTrue(by_account["b"]["event_id"].startswith("b:codex/10080:"))
 
+    def test_one_stale_read_on_a_does_not_break_the_pair(self):
+        # The 2026-10-11 backtest: a paired reset, then one read of a's
+        # pre-reset level on its pre-reset anchor (the 2026-09-09 replica
+        # shape) while a still idles. One read used to retract a's clear, and
+        # withdrawn_pairs() then mailed a correction for a reset that stood.
+        from scripts import attribution
+        t0, old_anchor = 1_791_700_000, 1_791_700_000 + 3 * 86400
+        d = qp.Detector()
+        events = []
+
+        def read(account, account_id, plan, t, used, anchor):
+            result = rpc(used, anchor, account_id=account_id, plan=plan)
+            for row in qp.normalise(result, t, account):
+                events.extend(d.observe(row))
+
+        for account, account_id, start, plan in (
+            ("a", ACCOUNT_A, t0, "pro"), ("b", ACCOUNT_B, t0 + 10, "prolite"),
+        ):
+            for i, level in enumerate((80, 0, 2)):
+                anchor = old_anchor if i == 0 else start + 60 * i + WEEK_SECONDS
+                read(account, account_id, plan, start + 60 * i, level, anchor)
+        stale_at = t0 + 60 * 200
+        read("a", ACCOUNT_A, "pro", stale_at, 80, old_anchor)
+        read("a", ACCOUNT_A, "pro", stale_at + 60, 2, stale_at + 60 + WEEK_SECONDS)
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_CLEAR] * 2)
+        self.assertEqual(attribution.withdrawn_pairs(events), [])
+        rows = export({"codex": block("codex"), "codex:b": block("codex:b")},
+                      events=events)["observations"]
+        self.assertEqual({row["verdict"] for row in rows}, {"vendor_reset"})
+        self.assertTrue(all(row["public"] for row in rows))
+        # A revert that HOLDS is still the clear un-happening: it breaks the pair.
+        read("a", ACCOUNT_A, "pro", stale_at + 120, 80, old_anchor)
+        read("a", ACCOUNT_A, "pro", stale_at + 180, 80, old_anchor)
+        self.assertEqual(events[-1]["kind"], qp.EVENT_RETRACTION)
+        self.assertEqual(len(attribution.withdrawn_pairs(events)), 1)
+
     def test_account_a_alone_stays_private(self):
         events = [e for e in clears_on_both() if e["account"] == "a"]
         (row,) = export({"codex": block("codex")}, events=events)["observations"]

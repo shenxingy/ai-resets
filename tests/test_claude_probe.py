@@ -683,10 +683,31 @@ class DetectionTests(unittest.TestCase):
         self.feed(usage_payload(weekly=48, weekly_resets=anchor), "a", T0)
         self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 300)
         self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 600)
+        # The snap-back has to be read twice in a row (qp.REVERT_POLLS): one
+        # stale replica read must not withdraw a real reset.
+        held = self.feed(usage_payload(weekly=47, weekly_resets=anchor), "a", T0 + 900)
+        self.assertEqual(self.weekly_events(held), [])
         events = self.weekly_events(
-            self.feed(usage_payload(weekly=47, weekly_resets=anchor), "a", T0 + 900)
+            self.feed(usage_payload(weekly=47, weekly_resets=anchor), "a", T0 + 1200)
         )
         self.assertEqual(events[0]["kind"], qp.EVENT_RETRACTION)
+        self.assertEqual(events[0]["reverted_at"], T0 + 900)
+
+    def test_one_snap_back_read_between_idle_reads_withdraws_nothing(self):
+        anchor = T0 + 3 * DAY
+        self.feed(usage_payload(weekly=48, weekly_resets=anchor), "a", T0)
+        self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 300)
+        self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 600)
+        events = []
+        for i, weekly in enumerate((47, 0, 47, 0)):
+            events += self.weekly_events(
+                self.feed(usage_payload(weekly=weekly, weekly_resets=anchor), "a", T0 + 900 + 300 * i)
+            )
+        self.assertEqual(events, [])
+        # Still the one clear, under the id it was confirmed with.
+        pending = self.detector.slots["claude:a:weekly_all/10080"]["pending"]
+        self.assertEqual(pending["event_id"], f"claude:a:weekly_all/10080:{T0 + 300}")
+        self.assertTrue(pending["confirmed"])
 
     def test_a_five_hour_clear_can_never_be_vendor_evidence(self):
         anchor = T0 + 4 * 3600

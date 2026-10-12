@@ -205,7 +205,11 @@ A probe-first incident (no announcement) can only start from `vendor_reset`:
 - **A post arriving later:** a trusted post that confirms the pair takes the
   incident over and records it in `merged_from`.
 - **A retraction:** a pair that a retraction breaks becomes one `retracted`
-  row, so the people who were mailed get the correction.
+  row, so the people who were mailed get the correction. A probe retracts a
+  clear only when two consecutive reads show it reverted (`REVERT_POLLS`):
+  on 2026-09-09 the vendor served account a's pre-reset level on its
+  pre-reset anchor for one poll, and any other read in between restarts the
+  count.
 
 An `unattributed` clear with no witness never becomes public and never mails.
 Nothing alerts the owner for `observed_pending` or for an account change; both
