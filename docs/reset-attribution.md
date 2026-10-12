@@ -246,6 +246,13 @@ On every clear event: `account`, `account_fp_before`, `account_fp_after`,
 `unspent/spent/unread/no_bank`, `tight/wide` and `none/found/unread/n_a`.
 Credit-grant events carry `account` too.
 
+A clear also carries `credit_itemised`: `true` only when both sides listed
+their credits (`credit_ids` a list, `[]` included). It sets how much any
+published sentence or email may say about the bank. Itemised, it may say no
+credit left the bank before its expiry. Otherwise only the count was read,
+so it says "the banked credit count read N then N" and no more: a grant and
+a redemption between two polls cancel in a count.
+
 Published rows carry neither fingerprints nor raw event ids. A row's id is
 `obs-<first 12 hex digits of sha256("ai-resets/observation:" + event id)>`,
 because a Claude model-scoped slot id can contain an unreleased model's name.

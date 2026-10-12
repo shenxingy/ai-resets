@@ -937,6 +937,8 @@ def attribute_early_clear(
     checks: dict[str, Any],
     early_by: int,
     details: dict[str, str] | None = None,
+    *,
+    credit_itemised: bool = False,
 ) -> tuple[str, str]:
     """(classification, reason) for an early clear no own-cause explained.
 
@@ -944,14 +946,19 @@ def attribute_early_clear(
     Otherwise `global_candidate`, the legacy name for "unresolved, because a
     check could not be run", and the reason names each one. Shared with the
     Claude probe, which re-runs it once it has read the profile's history.
+
+    `credit_itemised` says the bank listed its credits on both sides. Without
+    that only the COUNT was read, and a count that did not fall cannot show
+    that no credit left: a grant and a redemption between two polls cancel.
     """
     failing = unchecked(checks)
     if not failing:
-        credit = (
-            "no banked-credit ledger to read"
-            if checks.get("credit") == CREDIT_NO_BANK
-            else "the bank read on both sides with no credit leaving it"
-        )
+        if checks.get("credit") == CREDIT_NO_BANK:
+            credit = "no banked-credit ledger to read"
+        elif credit_itemised:
+            credit = "the bank itemised on both sides with no credit leaving it early"
+        else:
+            credit = "the banked credit count read on both sides and not lower after"
         trace = (
             ", no reset menu in the profile's history"
             if checks.get("local_trace") == TRACE_NONE
@@ -1014,6 +1021,12 @@ def classify(
     credit_spent = (
         isinstance(before, int) and isinstance(after, int) and after < before
     )
+    # Both sides listed their credits (`[]` is itemised and empty), so the id
+    # test in credit_left ran across the bracket. Only then may a sentence say
+    # no credit left the bank; otherwise only the count was measured.
+    itemised = isinstance(previous.get("credit_ids"), list) and isinstance(
+        current.get("credit_ids"), list
+    )
     lo, hi = previous["t"], current["t"]
     left = None
     if CREDIT_BANK and not credit_spent:
@@ -1072,6 +1085,7 @@ def classify(
             checks,
             early_by,
             check_details(lo, hi, poll, carried=carried, anchor_jump=anchor_jump),
+            credit_itemised=itemised,
         )
 
     return {
@@ -1082,6 +1096,10 @@ def classify(
         "credits_before": before,
         "credits_after": after,
         "credits_carried": carried,
+        # What a sentence about the bank may claim: true only when both sides
+        # listed their credits. The email (scripts/groundtruth.py) reads it
+        # off the raw event the same way observation_sentences() does.
+        "credit_itemised": itemised,
         "checks": checks,
     }
 
@@ -2204,24 +2222,32 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
             "out. This is not evidence of a provider-wide reset.",
         )
 
+    # What the bank showed across an early clear nothing on our side
+    # explained. An unchanged COUNT cannot show that no credit left: grants,
+    # spending and expiry can overlap between polls (README.md says so too).
+    # Only a bank that listed its credits on both sides, with every id still
+    # there or gone at its own expiry, earns the stronger clause. A record
+    # written before `credit_itemised` existed gets the weaker one.
+    bank_read = f"the banked credit count read {before_credits} then {after_credits}"
+    if event.get("credit_itemised") is True:
+        bank_read += " with no credit leaving the bank before its expiry"
+
     if verdict == VERDICT_VENDOR_RESET:
         # Reachable only through scripts/attribution.py: VERDICT_OF_CLASS maps
         # no class to this verdict, so one account can never produce it.
         return (
             f"{ours_cap} cleared {early} early, and so did a second "
             "account of ours.",
-            f"{change} {moment}, {gap}; {checked_clause(event)}, and the banked credit "
-            f"count read {before_credits} then {after_credits} with no credit leaving "
-            f"the bank. {witness_clause(event, window)}",
+            f"{change} {moment}, {gap}; {checked_clause(event)}, and {bank_read}. "
+            f"{witness_clause(event, window)}",
         )
 
     if verdict == VERDICT_UNATTRIBUTED:
         return (
             f"{ours_cap} cleared {early} early, with no cause on our side "
             "that this probe can see.",
-            f"{change} {moment}, {gap}; {checked_clause(event)}, and the banked credit "
-            f"count read {before_credits} then {after_credits} with no credit leaving "
-            "the bank. A reset the account holder paid for leaves no trace this probe "
+            f"{change} {moment}, {gap}; {checked_clause(event)}, and {bank_read}. "
+            "A reset the account holder paid for leaves no trace this probe "
             "can read, so one account alone cannot say whose reset this was.",
         )
 

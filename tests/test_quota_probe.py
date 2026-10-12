@@ -1387,6 +1387,28 @@ class AttributionTest(unittest.TestCase):
         self.assertEqual(verdict["classification"], qp.CLASS_GLOBAL)
         self.assertIn("reset-menu history", verdict["reason"])
 
+    def test_the_clear_says_whether_the_bank_was_itemised_on_both_sides(self):
+        # Contract, "credit, Codex": the list is an extra test, not required,
+        # so a count-only 1 -> 1 is still unattributed. What it changes is how
+        # much a sentence may claim (observation_sentences, the email).
+        for before_ids, after_ids, expected in (
+            ([CREDIT_1], [CREDIT_1], True),
+            ([], [], True),
+            (None, [CREDIT_1], False),
+            ([CREDIT_1], None, False),
+        ):
+            with self.subTest(before=before_ids, after=after_ids):
+                before, after = clear_pair(credit_ids=after_ids)
+                before = {**before, "credit_ids": before_ids}
+                verdict = qp.classify(before, after, 1_000_000)
+                self.assertEqual(verdict["classification"], qp.CLASS_UNATTRIBUTED)
+                self.assertIs(verdict["credit_itemised"], expected)
+                if expected:
+                    self.assertIn("no credit leaving it early", verdict["reason"])
+                else:
+                    self.assertNotIn("leaving", verdict["reason"])
+                    self.assertIn("count read on both sides", verdict["reason"])
+
     def test_a_check_value_nobody_wrote_down_does_not_pass(self):
         good = {"identity": "same", "plan": "same", "credit": "unspent",
                 "bracket": "tight", "local_trace": "none"}
@@ -2390,9 +2412,28 @@ class SentenceTest(unittest.TestCase):
             "that this probe can see.",
         )
         self.assertIn("read on both sides of a 60-second bracket", row["evidence"])
-        self.assertIn("read 1 then 1 with no credit leaving the bank", row["evidence"])
         self.assertIn("cannot say whose reset this was", row["evidence"])
         self.assertFalse(row["public"])
+        # 2026-08-30 read the COUNT only (no credits[] then), so the sentence
+        # says what was measured and claims nothing about credits leaving: a
+        # grant and a redemption between two polls cancel in a count.
+        self.assertIn("the banked credit count read 1 then 1. ", row["evidence"])
+        self.assertNotIn("no credit leaving", row["evidence"])
+        itemised = observe({**LIVE_2026_08_30, "classification": qp.CLASS_UNATTRIBUTED,
+                            "credit_itemised": True})
+        self.assertIn(
+            "read 1 then 1 with no credit leaving the bank before its expiry.",
+            itemised["evidence"],
+        )
+
+    def test_only_a_literal_true_earns_the_itemised_clause(self):
+        # A legacy record has no field; a hand-edited one may hold a string.
+        for value in (None, False, "true", 1):
+            with self.subTest(value=value):
+                record = {**LIVE_2026_08_30, "classification": qp.CLASS_UNATTRIBUTED}
+                if value is not None:
+                    record["credit_itemised"] = value
+                self.assertNotIn("no credit leaving", observe(record)["evidence"])
 
     def test_an_account_change_names_what_changed_and_no_fingerprint(self):
         row = observe(SEP_19_CHANGE)
