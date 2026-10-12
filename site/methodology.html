@@ -32,7 +32,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,600&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://resets.alexshen.dev/methodology.html","name":"Methodology & Sources — AI Reset Watch","url":"https://resets.alexshen.dev/methodology.html","dateModified":"2026-10-11","isPartOf":{"@id":"https://resets.alexshen.dev/#website"},"about":{"@id":"https://resets.alexshen.dev/#dataset"}},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does AI Reset Watch know when provider systems actually reset?","acceptedAnswer":{"@type":"Answer","text":"Only for our own accounts. Probes on two Codex accounts and two Claude Code accounts read those accounts\u2019 own usage windows and can say whether a window expired on schedule or cleared early. An early clear counts as the vendor\u2019s reset only when two of our accounts clear together or a trusted reset post lands within minutes of it. Everything else is linked public announcements. No provider telemetry or internal execution time is visible to this site."}},{"@type":"Question","name":"Are the timing patterns predictions?","acceptedAnswer":{"@type":"Answer","text":"No. Weekday and time-of-day views are descriptive summaries of tracked public announcement timestamps in Pacific Time. Small samples and missing announcements can create apparent clusters."}},{"@type":"Question","name":"Is AI Reset Watch affiliated with Anthropic, OpenAI, or Google?","acceptedAnswer":{"@type":"Answer","text":"No. AI Reset Watch is independently maintained and unaffiliated with the providers it tracks."}}]}]}
+  {"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://resets.alexshen.dev/methodology.html","name":"Methodology & Sources — AI Reset Watch","url":"https://resets.alexshen.dev/methodology.html","dateModified":"2026-10-11","isPartOf":{"@id":"https://resets.alexshen.dev/#website"},"about":{"@id":"https://resets.alexshen.dev/#dataset"}},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does AI Reset Watch know when provider systems actually reset?","acceptedAnswer":{"@type":"Answer","text":"Only for our own accounts. Probes on two Codex accounts and two Claude Code accounts read those accounts\u2019 own usage windows and can say whether a window expired on schedule or cleared early. One account cannot tell a provider reset from one its holder paid for, so an early clear counts as the provider\u2019s reset only with a second witness: another of our accounts clearing the same window within the hour, or a verified provider post saying a reset happened, posted between an hour before and three hours after the clear. Everything else is linked public announcements. No provider telemetry or internal execution time is visible to this site."}},{"@type":"Question","name":"Are the timing patterns predictions?","acceptedAnswer":{"@type":"Answer","text":"No. Weekday and time-of-day views are descriptive summaries of tracked public announcement timestamps in Pacific Time. Small samples and missing announcements can create apparent clusters."}},{"@type":"Question","name":"Is AI Reset Watch affiliated with Anthropic, OpenAI, or Google?","acceptedAnswer":{"@type":"Answer","text":"No. AI Reset Watch is independently maintained and unaffiliated with the providers it tracks."}}]}]}
   </script>
 </head>
 <body>
@@ -49,7 +49,7 @@
         <h2>What counts as a signal</h2>
         <p>An event must describe a usage reset, a temporary quota intervention, or a durable quota-policy change affecting Claude Code, Codex/ChatGPT, Gemini CLI, or Code Assist. Product launches and unrelated status incidents are excluded.</p>
         <p>Times represent the linked public announcement or the closest observable publication time. They are not internal provider execution timestamps. Events labeled “approximate” have date-level uncertainty and should not be used for hour-of-day analysis.</p>
-        <p>Own-account <em>observations</em> are a separate kind of row with separate rules. They are described in <a href="#ground-truth">Natural expiry or an actual reset</a> and never enter the announcement counts, the “last tracked move” figure, or the weekday timing pattern.</p>
+        <p>Own-account <em>observations</em> are a separate kind of row with separate rules. They are described in <a href="#ground-truth">Account recovery is not a provider-wide reset</a> and never enter the announcement counts, the “last tracked move” figure, or the weekday timing pattern.</p>
       </section>
 
       <section id="sources">
@@ -64,21 +64,40 @@
 
       <section id="ground-truth">
         <h2>Account recovery is not a provider-wide reset</h2>
-        <p>Our probes watch the operator's Codex and Claude Code quota windows. A counter clearing early tells us when this account recovered quota, but it does not tell us who caused it or which other users were affected.</p>
+        <p>Our probes read the usage windows of two Codex accounts and two Claude Code accounts that the operator holds. When a window that was in use drops to zero, the probe knows when that happened on that account. It does not know who caused it, or which other users were affected.</p>
+        <h3>What one account can rule out</h3>
+        <p>Before an early clear counts for anything, the probe checks every cause on the account holder’s side that it can see:</p>
+        <ul>
+          <li><strong>A switch of account or plan.</strong> Each reading records a one-way fingerprint of the signed-in account, and the plan. A clear across a switch is two different quotas, not a reset.</li>
+          <li><strong>A banked reset spent.</strong> Codex accounts can save reset credits and redeem them from any device. The probe reads the bank every minute, and a credit leaving it just before or during the clear makes the clear the account holder’s own, even though a credit can also simply expire.</li>
+          <li><strong>The Claude Code reset menu.</strong> If the menu was opened on this machine in the hour before a Claude clear, the clear is the account holder’s own.</li>
+          <li><strong>A gap in the readings.</strong> If the readings either side of a clear are more than three polls apart, there was room for something the probe never saw, so its cause stays open.</li>
+        </ul>
+        <h3>What one account cannot see</h3>
+        <p>Two ways of resetting a limit leave nothing a probe can read. OpenAI sells personal plans an instant reset that touches neither the bank nor anything else the usage response reports. A Claude limit reset redeemed on the web or in the desktop app keeps the weekly schedule, exactly as a provider reset does. So an early clear with everything above ruled out still looks the same whether the provider reset everyone or the account holder paid to reset their own. One account is never enough.</p>
+        <h3>The second witness</h3>
+        <p>An early clear counts as the provider’s reset only when something independent of that account agrees:</p>
+        <dl>
+          <dt><strong>Another of our accounts</strong></dt>
+          <dd>A second, separate account of ours, with the same checks passed, cleared the same window within an hour. Both clears are shown, each naming the other as its witness. If both were at 95% or more of their limit beforehand, they stay private: that is exactly when an account holder would pay to reset.</dd>
+          <dt><strong>The provider’s own post</strong></dt>
+          <dd>A verified post from a reviewed official or staff account says a reset already happened, and it was posted between one hour before and three hours after the clear. The announcement is then marked as seen on our account, with the time. The single account’s clear is not shown as a row of its own.</dd>
+        </dl>
+        <h3>How each kind of clear is shown</h3>
         <dl>
           <dt><strong>Scheduled expiry</strong></dt>
-          <dd>The clear landed at or after the scheduled expiry recorded while the window was active. We may show it as an observation of our own account; it never counts as an extra provider reset.</dd>
-          <dt><strong>Personal reset use</strong></dt>
-          <dd>A Bank count falling across a clear suggests personal redemption, but credits can also expire. These observations stay private and never confirm a public reset.</dd>
-          <dt><strong>Cause unverified</strong></dt>
-          <dd>An early clear on one account, or a clear without a recorded expiry anchor, stays in the private probe log, even when every own-cause the probe can see (an account switch, a spent banked credit, the Claude Code reset menu) was checked and excluded: a reset the account holder paid for on the web leaves no trace any probe can read.</dd>
-          <dt><strong>Vendor reset on two accounts</strong></dt>
-          <dd>Two of our separate accounts, each with every own-cause excluded, cleared the same window within an hour of each other. Each is shown with the other as its witness. If both were at 95% or more of their limit before clearing, they stay private: that is exactly when an account holder would pay to reset.</dd>
+          <dd>The clear landed at the scheduled expiry recorded while the window was active. We may show it as an observation of our own account; it never counts as an extra provider reset.</dd>
+          <dt><strong>Reset on two of our accounts</strong></dt>
+          <dd>Shown beside the other account’s clear. With no announcement yet, it may start an alert after a two-hour hold.</dd>
+          <dt><strong>Our own reset, or a switch of account</strong></dt>
+          <dd>Kept in the private probe log. It describes what the account holder did, not what the provider did.</dd>
+          <dt><strong>Cause not established</strong></dt>
+          <dd>An early clear on one account stays in the private probe log, whether every visible cause was ruled out or a check could not be run. So does a clear with no recorded expiry, and every five-hour Claude clear, which ordinary expiry and the reset command produce alike.</dd>
           <dt><strong>Bank credits granted</strong></dt>
-          <dd>A credit becoming available is separate from using it. An official announcement granting reset credits does not mean users' quota windows have already reset.</dd>
+          <dd>A credit becoming available is separate from using it. An official announcement granting reset credits does not mean users’ quota windows have already reset.</dd>
         </dl>
-        <p><a href="https://learn.chatgpt.com/docs/app-server">OpenAI documents separate Bank balances and redemption operations</a>. <a href="https://support.claude.com/en/articles/17007452-what-is-a-limit-reset">Claude personal limit resets can restore five-hour or weekly limits</a>, including the same account's Claude Code usage. Our Claude usage response does not expose a reset-redemption ledger.</p>
-        <p>A single account's early clear never becomes a public reset and never starts an alert on its own. It can mark an announcement confirmed only when the announcement is a verified post from a reviewed account saying a reset already happened, posted between one hour before and three hours after the clear; the alert then says when our account saw it. Two accounts clearing together may start an alert before anyone posts, after a two-hour hold. Old probe logs carry no account fingerprint, so exporting them again can never produce either. Official announcements remain visible with the scope stated by their source.</p>
+        <p><a href="https://learn.chatgpt.com/docs/app-server">OpenAI documents separate Bank balances and redemption operations</a>. <a href="https://support.claude.com/en/articles/17007452-what-is-a-limit-reset">Claude personal limit resets can restore five-hour or weekly limits</a>, including the same account’s Claude Code usage. Our Claude usage response does not expose a reset-redemption ledger.</p>
+        <p>Old probe logs carry no account fingerprint, so exporting them again can never turn one of their clears into a witness of either kind. Official announcements remain visible with the scope stated by their source.</p>
         <h3>What the probes can establish</h3>
         <ul>
           <li><strong>Readings, not fleet coverage.</strong> The probes measure two Codex accounts and two Claude accounts. Google has no active probe. A freshness badge describes the last successful reading, not verification of a provider-wide reset.</li>
@@ -110,7 +129,7 @@
       <section id="faq">
         <h2>Frequently asked questions</h2>
         <h3>Does the site know when provider systems actually reset?</h3>
-        <p>Only for our own accounts. Probes on two Codex accounts and two Claude Code accounts measure those accounts’ own usage windows and can say whether a window expired on schedule or cleared early. An early clear counts as the vendor’s reset only when two of our accounts clear together or a trusted reset post lands within minutes of it. Everything else is public announcements. No provider telemetry is visible to this site, and no observation here describes any account but ours.</p>
+        <p>Only for our own accounts. Probes on two Codex accounts and two Claude Code accounts measure those accounts’ own usage windows and can say whether a window expired on schedule or cleared early. One account cannot tell a provider reset from one its holder paid for, so an early clear counts as the provider’s reset only with a second witness: another of our accounts clearing the same window within the hour, or a verified provider post saying a reset happened, posted between an hour before and three hours after the clear. Everything else is public announcements. No provider telemetry is visible to this site, and no observation here describes any account but ours.</p>
         <h3>Are timing patterns predictions?</h3>
         <p>No. They summarize tracked announcement timestamps and are explicitly limited by sample size and coverage.</p>
         <h3>Is this affiliated with Anthropic, OpenAI, or Google?</h3>
@@ -122,7 +141,7 @@
         <p>If a timestamp, description, or source link is wrong, use the contact route on <a href="https://alexshen.dev/" rel="noopener">alexshen.dev</a>. Corrections should include the event and a primary public source.</p>
       </section>
 
-      <p>Last reviewed September 5, 2026.</p>
+      <p>Last reviewed October 11, 2026.</p>
     </div>
   </main>
   <script src="analytics.js"></script>
