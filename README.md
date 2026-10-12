@@ -8,8 +8,10 @@ Most trackers can only repeat what a vendor said. This one also **measures**:
 probes read the maintainer's own subscription quota straight from the vendor
 APIs, so a window that clears can be told apart from a window that merely
 expired on schedule. When an announcement and a measurement agree, the site
-can report the timing. An early account clear alone never confirms or
-originates a public reset: personal redemption must first be ruled out.
+can report the timing. One account's early clear never starts a public reset
+on its own, because an account holder can reset their own limit in ways no
+quota API shows. It takes a second witness: another of our accounts, or the
+vendor's own post.
 
 Live at the address in [`site.config.json`](site.config.json).
 
@@ -64,10 +66,7 @@ Three measured facts drive the detection logic:
    grants, spending and expiry can overlap between polls. Claude's personal
    limit resets can restore weekly limits too, and its usage response does not
    expose a redemption ledger. One account can only rule out the own-causes it
-   can see, so an early clear is the vendor's only with a second witness: a
-   second account of ours clearing the same window within the hour, or a
-   trusted reset post within minutes
-   ([docs/reset-attribution.md](docs/reset-attribution.md)).
+   can see, hence the [second witness](#what-the-verdicts-mean).
 
 A clear must persist across two polls before it is trusted: on one occasion a
 weekly window went 91% to 0% in 3.7 s, held for 12 h 41 m, and then reverted
@@ -79,33 +78,38 @@ completes. Google has no probe yet.
 
 ## What the verdicts mean
 
-The probes record account observations separately from vendor announcements.
 Confirmation across polls proves that a clear persisted, not who caused it.
+Each probe first rules out every cause on the account's own side that it can
+see: an account or plan switch, a spent banked credit, the Claude Code reset
+menu. Two causes stay invisible: OpenAI's paid instant reset and a Claude
+limit reset redeemed on the web. So an early clear counts as the vendor's
+only with a **second witness**:
+
+- **another of our accounts.** It must be a different account, cleared the
+  same window early within the hour, and passed the same checks; or
+- **a trusted vendor post** saying the reset already happened, posted between
+  one hour before and three hours after the clear. The post is marked
+  confirmed. The single account's clear stays private.
 
 | Verdict | Meaning | Published |
 |---|---|---|
-| `natural_expiry` | Cleared at or after the scheduled expiry | yes |
-| `vendor_reset` | Two of our accounts (different fingerprints) cleared the same window early within an hour, each `unattributed`, not both at 95% or more | yes, with its witness |
-| `unattributed` | Cleared early with every own-cause the probe can see checked and excluded | **no** |
-| `unresolved` | Cleared early with a check that could not run, or no expiry anchor | **no** |
-| `self_applied` | A banked credit left within the lookback (Codex), or the Claude Code reset menu was opened in the hour before (Claude); possible personal reset use | **no** |
+| `natural_expiry` | Cleared at its scheduled expiry | yes |
+| `vendor_reset` | Two of our accounts cleared the same window early within an hour, each `unattributed`, not both at 95% or more | yes, beside its witness |
+| `unattributed` | Cleared early, with every own-cause the probe can see checked and excluded | **no** |
 | `account_change` | The account or plan differs across the clear; not a reset | **no** |
+| `self_applied` | A banked credit left (Codex), or the Claude Code reset menu was opened in the hour before (Claude) | **no** |
+| `unresolved` | Cleared early but a check could not run, or no expiry anchor on record | **no** |
 
-Legacy `global_candidate` records now export as `unresolved`, so historical
-logs cannot bypass this rule; they carry no account fingerprint, so they can
-never become `vendor_reset` either. Both exporters and the raw-log reader
-behind announcement and email annotations decide `vendor_reset` in one place,
-`scripts/attribution.py`. A single account's `unattributed` clear never
-originates an incident or a public row: it can only mark a trusted
-retrospective reset post confirmed, and only when the post lands between one
-hour before and three hours after the clear. A `vendor_reset` pair with no
-trusted post becomes one probe-first incident, mailed once after a 120-minute
-hold. Private samples and event logs are retained for review.
-
-A Bank credit grant is a separate event from a quota clear. Timing a grant
-near an official announcement is only a timing match, not proof of causation
-or a reset of anyone's quota. Public announcements remain visible as claims
-by their sources, with the scope those sources state.
+A `vendor_reset` pair with no post becomes one incident, mailed once after a
+120-minute hold. `scripts/attribution.py` decides it for the site, the
+announcement annotations and the email alike. Legacy `global_candidate`
+records read as `unresolved` and carry no account fingerprint, so they never
+pair. A banked-credit grant is a separate event from a clear, and timing one
+near an announcement proves nothing about anyone's quota. Announcements stay
+visible as their sources' claims, with the scope those sources state. Private
+samples and event logs are kept for review. The full rule and every historical
+clear, attributed:
+[docs/reset-attribution.md](docs/reset-attribution.md).
 
 Official contracts: [OpenAI reset Bank and redemption](https://learn.chatgpt.com/docs/app-server)
 and [Claude personal limit resets](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset).
