@@ -1539,6 +1539,31 @@ class CreditLookbackTest(unittest.TestCase):
         at_hi = {**later, "expires_at": 60}
         self.assertIsNone(qp.credit_left([{"t": 0, "count": 1, "ids": [at_hi]}], 0, 60, 1, [], 60))
 
+    def test_the_expiry_boundary_is_the_read_that_showed_the_clear(self):
+        # Gone at or before `hi`, a credit may simply have expired; gone while
+        # its expiry was still ahead, it was spent. Only expires_at=60 (== hi)
+        # and a date years out were pinned, so moving the boundary by a day
+        # passed: a credit redeemed an hour before its own expiry read as
+        # expired and the clear could stay unattributed.
+        lo, hi = 0, 60
+        for expires_at, spent in ((hi, False), (hi + 1, True), (hi + 3600, True)):
+            with self.subTest(after_hi=expires_at - hi):
+                credit = {"id": "c00000000005", "expires_at": expires_at}
+                why = qp.credit_left([{"t": lo, "count": 1, "ids": [credit]}], lo, hi, 1, [], 60)
+                self.assertEqual(why is not None, spent)
+
+    def test_a_credit_spent_an_hour_before_its_expiry_makes_the_clear_self_applied(self):
+        # The same boundary as the Detector applies it, count unchanged
+        # because a second credit arrived in the same interval.
+        for expires_in, expected in ((0, qp.CLASS_UNATTRIBUTED), (3600, qp.CLASS_SELF)):
+            with self.subTest(expires_in=expires_in):
+                soon = {"id": "c00000000006", "expires_at": 60 + expires_in}
+                d = qp.Detector()
+                d.observe(held(0, 90, 1_000_000, ids=[soon]))
+                d.observe(held(60, 0, 60 + WEEK_SECONDS, ids=[CREDIT_2]))
+                event = d.observe(held(120, 0, 120 + WEEK_SECONDS, ids=[CREDIT_2]))[0]
+                self.assertEqual(event["classification"], expected)
+
     def test_classify_reads_the_lookback_itself(self):
         # The Detector's late refresh repeats this test a poll later, which
         # would hide a classify() that skipped it; an anchor-jump clear is
