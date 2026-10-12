@@ -253,6 +253,16 @@ A probe-first incident (no announcement) can only start from `vendor_reset`:
     member's `reverted_at` strictly later than the last member's
     `confirmed_at`. A clear taken back before its partner was confirmed never
     made a pair, and produces no row at all.
+  - **It must have been mailable:** the earliest revert no sooner than the
+    120-minute hold after the later clear. A pair broken inside the hold was
+    never mailed, so nobody is owed a correction; and a pair can form and
+    break between two five-minute publishes, in which case its row would have
+    been the only public trace of the clear left standing. Such a pair
+    produces no row (the post it confirmed, if any, still reads
+    `reverted_on_our_account`).
+  - **Confirmation needs consecutive idle reads:** a revert read held for a
+    second opinion restarts the clear's `CONFIRM_POLLS` count, so idle,
+    revert, idle does not confirm it.
   - **The row carries only** `incident_key`, the published id, `status:
     retracted` and `verdict: null`. No clears, account labels or times:
     `scripts/check_site.py` fails the publish if it carries anything else.
