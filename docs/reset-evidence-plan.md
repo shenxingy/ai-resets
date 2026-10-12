@@ -1,7 +1,12 @@
 # Reset evidence status improvement plan
 
-Recorded October 10, 2026, Pacific Time. Status: planned; implementation has
-not started.
+Recorded October 10, 2026, Pacific Time. Status on October 12, 2026: both items
+still open. The attribution stack (#3–#7, `docs/reset-attribution.md`) changed
+the rules around them but implemented neither: account clears now have a
+vocabulary for their cause (`unattributed`, `account_change`, `self_applied`,
+`unresolved`), yet a public announcement with no admissible confirmation still
+reads `not_seen`, and the healthy probe badge still says
+`Ground truth · verified`.
 
 The October 10 Codex reset announcement was collected and published. The
 follow-up audit found two clarity problems: an account clear with an unknown
@@ -12,12 +17,15 @@ evidence rules.
 
 ## Current behavior
 
-- [Announcement annotation](../scripts/build.py) accepts only `vendor_reset`
-  as reset confirmation. An account clear classified as `unresolved` therefore
-  falls through to `not_seen`, conflating an unverified cause with no clear.
-- [Probe classification](../scripts/quota_probe.py) deliberately maps legacy
-  `global_candidate` records to `unresolved`. Repeated readings confirm that
-  a clear persisted; they do not establish who caused it.
+- [Announcement annotation](../scripts/build.py) accepts `vendor_reset` (two of
+  our accounts) within ±6 h, or one account's `unattributed` clear between
+  3 h before and 1 h after a trusted retrospective post, as reset
+  confirmation. Any other account clear — `unresolved` included — still falls
+  through to `not_seen`, conflating an unverified cause with no clear.
+- [Probe classification](../scripts/quota_probe.py) maps an early clear whose
+  own-cause checks could not all run (and every legacy `global_candidate`
+  record) to `unresolved`. Repeated readings confirm that a clear persisted;
+  they do not establish who caused it.
 - The healthy probe badge in [the static builder](../scripts/build.py) and
   [the browser code](../site/app.js) uses the last successful reading to say
   `verified`. This does not verify any particular reset announcement.
