@@ -1338,7 +1338,16 @@ class Store:
         )
         queued: list[tuple[str, str]] = []
         if not plan.baseline:
-            existing = self.delivered_incidents(STAGE_NEW)
+            # The real run renames first (discover_events), so a delivery
+            # already filed under a probe-first key counts against the post
+            # that adopts it. Counted before the rename, a post taking over an
+            # incident already mailed previewed as a second mail to everyone
+            # who had the first, while the run itself sent nothing.
+            renamed = dict(plan.adoptions)
+            existing = {
+                (renamed.get(key, key), email)
+                for key, email in self.delivered_incidents(STAGE_NEW)
+            }
             for event in plan.mailable:
                 key = incident_key(event)
                 for email, topics in self.active_subscribers():

@@ -666,6 +666,29 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("banked reset announced — not yet landed", output)
         self.assertIn("Not landed on our Pro account", output)
 
+    def test_the_preview_counts_a_mail_already_sent_under_the_key_it_will_adopt(self):
+        # Review case [03]: a probe-first incident was mailed, and a post now
+        # takes it over. The real run renames first and sends nothing; the
+        # preview counted before the rename and said "would send to 2".
+        self.baseline()
+        probe_key = "openai:probe-weekly-100"
+        observed = {"event_key": "openai:obs-1", "vendor": "openai", "event_id": "obs-1",
+                    "origin": "probe", "status": "observed", "incident_key": probe_key,
+                    "observed_at": iso(NOW - 900)}
+        self.store.discover_events([observed], now=NOW)
+        for row in self.store.pending_deliveries():
+            self.store.mark_sent(row["incident_key"], row["email"], "message")
+        post = event("openai:2109", "openai", status="confirmed", merged_from=probe_key)
+        quiet = {**observed, "incident_key": "openai:2109"}
+        quiet.pop("status")
+        plan, queued = self.store.preview_events([post, quiet], now=NOW)
+        self.assertEqual(plan.adoptions, ((probe_key, "openai:2109"),))
+        self.assertEqual(len(plan.mailable), 1)
+        self.assertEqual(queued, [])
+        # And the run it previews agrees.
+        self.store.discover_events([post, quiet], now=NOW)
+        self.assertEqual(self.store.pending_deliveries(), [])
+
     # ─── Owner alerts ────────────────────────────────────────────────────────
 
     def test_a_blind_probe_alerts_the_owner_once_and_recovers_once(self):

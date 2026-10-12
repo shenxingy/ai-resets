@@ -275,6 +275,15 @@ class TwoAccountFlowTests(FlowCase):
         self.assertEqual({r["incident_key"] for r in rows}, {"anthropic:2109132167112782291"})
         self.assertFalse(any("status" in r for r in rows))
 
+        # Review case [03]: the dry run must not preview a second mail that
+        # the run itself will not send.
+        preview = io.StringIO()
+        with contextlib.redirect_stdout(preview):
+            run_notifier(self.config, self.app, now=T0 + 600 + HOLD + 300, dry_run=True)
+        self.assertIn(f"would adopt {self.KEY} -> anthropic:2109132167112782291", preview.getvalue())
+        self.assertIn(" queued=0 ", preview.getvalue())
+        self.assertIn("would send to 0:", preview.getvalue())
+
         self.notify(T0 + 600 + HOLD + 300)
         self.notify(T0 + 600 + HOLD + 600)
         self.assertEqual(len(self.mails()), 2)
