@@ -1475,6 +1475,39 @@ class CreditLookbackTest(unittest.TestCase):
             events += d.observe(held(t, used, anchor, credits=credits, ids=None))
         self.assertEqual(events[0]["classification"], qp.CLASS_UNATTRIBUTED)
 
+    def fall_before_the_bracket(self, polls):
+        """Read every poll: the bank first reads 1 (from 2) `polls` polls
+        before the bracket opens, then the window clears a poll after it."""
+        lo = 600
+        rows = []
+        for t in range(0, lo + 1, 60):
+            credits = 1 if t >= lo - polls * 60 else 2
+            rows.append((t, 100.0, 1_000_000, credits))
+        rows += [(lo + 60, 0.0, lo + 60 + WEEK_SECONDS, 1),
+                 (lo + 120, 0.0, lo + 120 + WEEK_SECONDS, 1)]
+        clears = self.replay(rows)
+        self.assertEqual(len(clears), 1)
+        self.assertEqual(clears[0]["clear_bracket_lo"], lo)
+        return clears[0]
+
+    def test_a_fall_up_to_three_polls_before_the_bracket_is_self_applied(self):
+        # Every lookback test above puts the fall ONE poll before the bracket,
+        # which the reading in force when the span opened already covers, so
+        # narrowing the lookback to the bracket itself passed them all.
+        self.assertEqual(qp.CREDIT_LOOKBACK_POLLS, 3)  # the contract's number
+        for polls in range(1, qp.CREDIT_LOOKBACK_POLLS + 1):
+            with self.subTest(polls=polls):
+                clear = self.fall_before_the_bracket(polls)
+                self.assertEqual(clear["classification"], qp.CLASS_SELF)
+                self.assertIn("banked credit count read 2", clear["reason"])
+
+    def test_a_fall_a_poll_beyond_the_lookback_is_not_the_owners(self):
+        # The bank read the lower count on every poll from four polls before
+        # the bracket: the span the contract looks at never saw the 2.
+        clear = self.fall_before_the_bracket(qp.CREDIT_LOOKBACK_POLLS + 1)
+        self.assertEqual(clear["classification"], qp.CLASS_UNATTRIBUTED)
+        self.assertEqual(clear["checks"]["credit"], "unspent")
+
     def test_a_credit_leaving_with_the_count_unchanged_is_self_applied(self):
         # A redemption and a grant between two polls cancel in the count.
         d = qp.Detector()
