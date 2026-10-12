@@ -44,6 +44,7 @@ from scripts.groundtruth import (  # noqa: E402
     probe_first_line,
     probe_status,
     stale_age_line,
+    withdrawal_line,
 )
 from scripts.incidents import (  # noqa: E402
     ORIGIN_ANNOUNCEMENT,
@@ -83,10 +84,13 @@ def site_public_url() -> str:
 # history: the Anthropic feed alone would have sent 11 events x 7 subscribers.
 MAX_NOTIFY_AGE_SECONDS = 48 * 3600
 
-# More than this many mailable events appearing in a single run is a symptom
-# (a re-keyed upstream feed, a backfill, a new source), not a busy news day.
-# The whole batch is held rather than trimmed to the cap: choosing three of
-# eight to send would be worse than sending none and saying so.
+# More than this many mailable INCIDENTS appearing in a single run is a
+# symptom (a re-keyed upstream feed, a backfill, a new source), not a busy news
+# day. The whole batch is held rather than trimmed to the cap: choosing three
+# of eight to send would be worse than sending none and saying so. Counted in
+# incidents, not rows: one incident is one mail per subscriber however many
+# rows carry it, and counting rows held three resets in one refresh because
+# one of them sat on two rows (review case [16]).
 FLOOD_CAP = 3
 
 # The deployed feed is rebuilt every five minutes; if the notifier is reading
@@ -294,6 +298,13 @@ CLAIM_NONE = ""
 CLAIM_PENDING = "pending"
 CLAIM_SETTLED = "settled"
 
+# How a delivery that must never go out is recorded: `failed`, with this at
+# the head of `last_error` and the reason after it, so the row still blocks a
+# second queueing (the primary key) and the why is in the database next to
+# it. A new status would mean redefining the deliveries CHECK constraint on
+# the live database; pending_deliveries() skips these rows instead.
+CANCELLED_PREFIX = "cancelled: "
+
 # The incident statuses written into site/data.json. The notifier reads them
 # and never recomputes one. The mapping is the Email column of the lifecycle
 # table in docs/robustness-plan.md, transcribed here and nowhere else.
@@ -424,6 +435,12 @@ def plan_adoptions(
     """
     renames: dict[str, str] = {}
     for event in events:
+        if str(event.get("status") or "").strip().lower() == STATUS_RETRACTED:
+            # A correction names the incident it corrects; it never moves one.
+            # It reuses the event key of the pair row it withdraws, so reading
+            # it as a rename filed the incident back and forth between the
+            # probe key and the post key on every tick (review case [09]).
+            continue
         new_key = incident_key(event)
         candidates = (
             str(event.get("merged_from") or ""),
@@ -564,7 +581,7 @@ def plan_discovery(
         historical=tuple(historical),
         undatable=tuple(undatable),
         ripened=tuple(ripened),
-        flooded=len(mailable) > flood_cap,
+        flooded=len({incident_key(event) for event in mailable}) > flood_cap,
         silent=tuple(silent),
         adoptions=plan_adoptions(
             events, stored_by_event or {}, known_incidents or set()
@@ -1325,7 +1342,16 @@ class Store:
         )
         queued: list[tuple[str, str]] = []
         if not plan.baseline:
-            existing = self.delivered_incidents(STAGE_NEW)
+            # The real run renames first (discover_events), so a delivery
+            # already filed under a probe-first key counts against the post
+            # that adopts it. Counted before the rename, a post taking over an
+            # incident already mailed previewed as a second mail to everyone
+            # who had the first, while the run itself sent nothing.
+            renamed = dict(plan.adoptions)
+            existing = {
+                (renamed.get(key, key), email)
+                for key, email in self.delivered_incidents(STAGE_NEW)
+            }
             for event in plan.mailable:
                 key = incident_key(event)
                 for email, topics in self.active_subscribers():
@@ -1452,11 +1478,12 @@ class Store:
                     JOIN subscribers s USING(email)
                     WHERE d.status IN ('pending', 'failed')
                       AND d.attempts < ?
+                      AND COALESCE(d.last_error, '') NOT LIKE ?
                       AND s.status = 'active'
                       AND ({self._INCIDENT_PAYLOAD}) IS NOT NULL
                     ORDER BY ({self._INCIDENT_DISCOVERED}), d.email, d.stage
                     """,
-                    (max_attempts,),
+                    (max_attempts, f"{CANCELLED_PREFIX}%"),
                 )
             )
 
@@ -1572,6 +1599,41 @@ class Store:
                 WHERE incident_key = ? AND email = ? AND stage = ?
                 """,
                 (error[:240], now_ts(), incident_key_value, email, stage),
+            )
+
+    def cancel_delivery(
+        self,
+        incident_key_value: str,
+        email: str,
+        reason: str,
+        *,
+        stage: str = STAGE_NEW,
+        now: int | None = None,
+    ) -> bool:
+        """Stop an unsent delivery for good, and say why (CANCELLED_PREFIX).
+
+        Only an unsent row moves: a delivery already `sent` is the record of
+        an email a person received, and nothing may rewrite it. `attempts` is
+        left alone, because nothing was attempted.
+        """
+        current = now_ts() if now is None else now
+        with self.connect() as conn:
+            return bool(
+                conn.execute(
+                    """
+                    UPDATE deliveries
+                    SET status = 'failed', last_error = ?, updated_at = ?
+                    WHERE incident_key = ? AND email = ? AND stage = ?
+                      AND status != 'sent'
+                    """,
+                    (
+                        f"{CANCELLED_PREFIX}{reason}"[:240],
+                        current,
+                        incident_key_value,
+                        email,
+                        stage,
+                    ),
+                ).rowcount
             )
 
 
@@ -1915,14 +1977,11 @@ class SubscriptionApp:
             # "What our own account shows" — next to a headline saying the
             # observation has been withdrawn. Nothing guarantees the two agree,
             # and the reader has no way to tell which one is being retracted.
-            # State the withdrawal itself and nothing else.
+            # State the withdrawal itself and nothing else: whose clear
+            # reverted, and that the two-account claim falls with it, read
+            # from the raw log (groundtruth.withdrawal_line).
             gt_label = "What we told you, and why it no longer stands"
-            gt_line = (
-                "Our probe recorded this clear and later withdrew it: the window "
-                "went back to the level it held before, on the anchor it had "
-                "before, so the clear did not happen. We are correcting our own "
-                "observation here, not the vendor's announcement."
-            )
+            gt_line = withdrawal_line(event, state_dir=self.config.state_dir)
         else:
             gt_label = "What our own account shows"
 
@@ -2201,7 +2260,18 @@ def plan_retractions(
     """
     queued: list[tuple[str, str]] = []
     conditions: dict[str, str] = {}
-    for key, event in feed_incidents_with_status(events, STATUS_RETRACTED).items():
+    # A withdrawn row reuses the event key of the pair row it withdraws, so
+    # this store already knows which incident that pair was filed under: the
+    # probe key it was mailed under, or the post's key once a post took it
+    # over. That record decides, not the key the feed states, which is only
+    # build's inference and cannot know whether the rename ever happened.
+    stored = store.stored_incidents()
+    withdrawn = {
+        stored.get(str(event.get("event_key") or "")) or incident_key(event)
+        for event in events
+        if str(event.get("status") or "").strip().lower() == STATUS_RETRACTED
+    }
+    for key in sorted(withdrawn):
         if ORIGIN_ANNOUNCEMENT in store.incident_origins(key):
             conditions[f"incident:reverted:{key}"] = (
                 f"{key} was retracted on our own account, but the incident is "
@@ -2218,6 +2288,60 @@ def plan_retractions(
             "Site footnote only; no subscriber was written to."
         )
     return queued, conditions
+
+
+def feed_statuses(
+    events: list[dict[str, Any]], stored: dict[str, str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Incident key -> the rows the current feed carries for it.
+
+    A withdrawn row is filed where plan_retractions files it: under the
+    incident the store recorded its event key in, else under its stated key.
+    """
+    rows: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        key = incident_key(event)
+        if str(event.get("status") or "").strip().lower() == STATUS_RETRACTED:
+            key = stored.get(str(event.get("event_key") or "")) or key
+        rows.setdefault(key, []).append(event)
+    return rows
+
+
+def unsendable_reason(
+    stage: str,
+    key: str,
+    payload: dict[str, Any],
+    current: dict[str, list[dict[str, Any]]],
+) -> str | None:
+    """Why a queued probe-first `new` mail must not go out now, else None.
+
+    A probe-first incident is our own claim, and it can be withdrawn while
+    its first mail waits: held by the flood cap until someone releases it,
+    or failed and waiting for a retry. Sending it then mailed "two of our
+    accounts saw a reset" after the feed had already marked the pair
+    retracted, and the correction followed a tick later, to fewer people
+    (review case [11]). So the incident's status is read again from this
+    tick's feed before the mail is sent.
+
+    Returns "" for "not now": an incident with no row in this feed at all
+    may only be a build that lost its export for one tick, and cancelling on
+    an absence would lose a true mail for good. An announcement-backed
+    incident is the vendor's claim, never withdrawn by our probe.
+    """
+    if stage != STAGE_NEW or event_origin(payload) != ORIGIN_PROBE:
+        return None
+    rows = current.get(key) or []
+    if not rows:
+        return ""
+    statuses = sorted({str(row.get("status") or "").strip().lower() for row in rows} - {""})
+    if STATUS_RETRACTED in statuses:
+        return "the pair was withdrawn before this mail went out (feed status retracted)"
+    if any(mail_stage(row) == STAGE_NEW for row in rows):
+        return None
+    return (
+        "the incident no longer mails (feed status "
+        f"{', '.join(statuses) or 'none'})"
+    )
 
 
 def dispatch_owner_alerts(
@@ -2349,6 +2473,13 @@ def run_notifier(
             print(f"  would confirm to {email}: {key}")
         for key, email in retractions:
             print(f"  would retract to {email}: {key}")
+        current = feed_statuses(events, app.store.stored_incidents())
+        for row in app.store.pending_deliveries():
+            reason = unsendable_reason(
+                row["stage"], row["incident_key"], json.loads(row["payload_json"]), current
+            )
+            if reason:
+                print(f"  would cancel to {row['email']}: {row['incident_key']} ({reason})")
         dispatch_owner_alerts(
             app,
             {**health_conditions(config, health, data, now), **reversions},
@@ -2380,14 +2511,15 @@ def run_notifier(
             + ", ".join(event["event_key"] for event in plan.undatable[:10])
         )
     if plan.flooded:
+        held = sorted({incident_key(event) for event in plan.mailable})
         print(
-            f"FLOOD HELD n={len(plan.mailable)} (cap {FLOOD_CAP}): "
-            + ", ".join(event["event_key"] for event in plan.mailable)
+            f"FLOOD HELD n={len(held)} (cap {FLOOD_CAP}): "
+            + ", ".join(held)
             + " — release with `subscriptions.py notify --release`"
         )
         app.store.open_alert(
             "deliveries:flood-held",
-            f"{len(plan.mailable)} events arrived in one refresh and are held unsent.",
+            f"{len(held)} incidents arrived in one refresh and are held unsent.",
         )
 
     # A follow-up is decided before the send loop so it can go out on the same
@@ -2403,11 +2535,26 @@ def run_notifier(
     truths: dict[str, dict[str, Any]] = {}
     sent = 0
     failed = 0
+    # Read after discover_events, so an adoption this tick is already filed.
+    current = feed_statuses(events, app.store.stored_incidents())
+    cancelled: dict[str, tuple[str, int]] = {}
+    deferred: set[str] = set()
     for row in app.store.pending_deliveries():
         event = json.loads(row["payload_json"])
+        stage = row["stage"]
+        reason = unsendable_reason(stage, row["incident_key"], event, current)
+        if reason == "":
+            deferred.add(row["incident_key"])
+            continue
+        if reason is not None:
+            app.store.cancel_delivery(
+                row["incident_key"], row["email"], reason, stage=stage, now=now
+            )
+            count = cancelled.get(row["incident_key"], (reason, 0))[1]
+            cancelled[row["incident_key"]] = (reason, count + 1)
+            continue
         reading = describe_event(event)
         announced = event_time(event)
-        stage = row["stage"]
         # Everything ground_truth_for reads off the event: two incidents that
         # differ only in origin or trust must not share one sentence.
         cache_key = (
@@ -2451,6 +2598,12 @@ def run_notifier(
             sent += 1
         time.sleep(0.22)  # Resend's default team limit is five requests/second.
 
+    for key, (reason, count) in sorted(cancelled.items()):
+        # Addresses stay out of the journal; the rows carry the reason.
+        print(f"CANCELLED {key} n={count}: {reason}")
+    for key in sorted(deferred):
+        print(f"DEFERRED {key}: not in this feed; held until it is")
+
     alerts = dispatch_owner_alerts(
         app,
         {**health_conditions(config, health, data, now), **reversions},
@@ -2459,7 +2612,8 @@ def run_notifier(
     print(
         f"discovered={plan.new_count} historical={len(plan.historical)} "
         f"silent={len(plan.silent)} sent={sent} failed={failed} "
-        f"confirmed={len(confirmations)} retracted={len(retractions)} alerts={alerts}"
+        f"confirmed={len(confirmations)} retracted={len(retractions)} alerts={alerts} "
+        f"cancelled={sum(count for _, count in cancelled.values())}"
     )
     return 1 if failed else 0
 

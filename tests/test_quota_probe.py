@@ -405,13 +405,21 @@ class DetectorTest(unittest.TestCase):
         for i in range(1, 20):  # idle reads drift to t + window
             events.extend(d.observe(sample(60 * i, 0, 60 * i + WEEK_SECONDS)))
         self.assertEqual([e["kind"] for e in events], [qp.EVENT_CLEAR])
-        retractions = d.observe(sample(60 * 20, 92, anchor))
+        # The first revert read is held (REVERT_POLLS): the vendor served this
+        # very shape from a stale replica for one poll on 2026-09-09. A revert
+        # that holds, as this one did, is withdrawn a poll later.
+        self.assertEqual(d.observe(sample(60 * 20, 92, anchor)), [])
+        retractions = d.observe(sample(60 * 21, 92, anchor))
         self.assertEqual(len(retractions), 1)
         self.assertEqual(retractions[0]["kind"], qp.EVENT_RETRACTION)
         self.assertFalse(retractions[0]["confirmed"])
         self.assertEqual(retractions[0]["event_id"], events[0]["event_id"])
+        # When usage came back, not when the second read agreed.
         self.assertEqual(retractions[0]["reverted_at"], 60 * 20)
+        self.assertEqual(retractions[0]["revert_confirmed_at"], 60 * 21)
+        self.assertEqual(retractions[0]["revert_reads"], 2)
         self.assertEqual(retractions[0]["used_at_revert"], 92.0)
+        self.assertNotIn("revert_read", retractions[0])
         self.assertIsNone(d.slots["codex/10080"]["pending"])
 
     def test_usage_resuming_on_a_new_anchor_before_the_second_idle_read_confirms(self):
@@ -434,7 +442,8 @@ class DetectorTest(unittest.TestCase):
         d.observe(sample(0, 91, 1_000_000))
         d.observe(sample(60, 0, 1_000_000))
         clear = d.observe(sample(120, 0, 120 + WEEK_SECONDS))[0]
-        retraction = d.observe(sample(180, 92, 1_000_000))[0]
+        self.assertEqual(d.observe(sample(180, 92, 1_000_000)), [])  # held
+        retraction = d.observe(sample(240, 92, 1_000_000))[0]
         self.assertEqual(clear["event_id"], "codex/10080:60")
         self.assertEqual(retraction["event_id"], clear["event_id"])
 
@@ -456,7 +465,10 @@ class DetectorTest(unittest.TestCase):
         anchor = 1_000_000
         d.observe(sample(0, 91, anchor))
         d.observe(sample(60, 0, anchor))
-        events = d.observe(sample(120, 92, anchor))
+        # An unconfirmed clear waits for the second revert read too: the one
+        # rule is simpler to reason about than a rule per confirmation state.
+        self.assertEqual(d.observe(sample(120, 92, anchor)), [])
+        events = d.observe(sample(180, 92, anchor))
         self.assertEqual(len(events), 1)
         self.assertFalse(events[0]["confirmed"])
         self.assertEqual(events[0]["reverted_at"], 120)
@@ -475,10 +487,26 @@ class DetectorTest(unittest.TestCase):
         d = qp.Detector()
         d.observe(sample(0, 40, 500_000))
         d.observe(sample(60, 0, 60 + WEEK_SECONDS))
-        d.observe(sample(120, 55, 900_000))
+        d.observe(sample(120, 25, 900_000))
         state = d.slots["codex/10080"]
         self.assertIsNone(state["pending"])
         self.assertEqual(state["active_anchor"], 900_000)
+
+    def test_a_snap_back_resets_the_anchor_and_clears_pending_on_its_second_read(self):
+        # The case above used to read 55%, which is a snap-back to the 40%
+        # held before the clear (is_revert), so it was a single-read
+        # retraction all along. Under REVERT_POLLS the first such read is held
+        # with the watch still open; the second withdraws the clear.
+        d = qp.Detector()
+        d.observe(sample(0, 40, 500_000))
+        d.observe(sample(60, 0, 60 + WEEK_SECONDS))
+        self.assertEqual(d.observe(sample(120, 55, 900_000)), [])
+        state = d.slots["codex/10080"]
+        self.assertEqual(state["pending"]["revert_read"]["t"], 120)
+        self.assertEqual(state["active_anchor"], 900_000)
+        events = d.observe(sample(180, 55, 900_000))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_RETRACTION])
+        self.assertIsNone(state["pending"])
 
     def test_slots_are_tracked_independently(self):
         d = qp.Detector()
@@ -500,6 +528,152 @@ class DetectorTest(unittest.TestCase):
 
     def test_first_ever_sample_produces_no_event(self):
         self.assertEqual(qp.Detector().observe(sample(0, 0, 1_000)), [])
+
+
+# ─── Stale replica reads ─────────────────────────────────────────────────────
+
+
+# The codex/10080 rows the probe wrote for account a from the last reading
+# before the 2026-09-08 01:22:36 UTC clear to 2026-09-09 18:14:40, verbatim:
+# (t, used_percent, resets_at, credits). The clear's own event names
+# 1789191176 as the anchor in force before it. On 09-09 that anchor came back
+# twice at the pre-clear 92%, each time followed by the post-clear anchor
+# again: 16:56:40 -> 17:40:40 (no row between, so one read and a blind gap or
+# 44 identical reads; the log cannot say), and 18:13:40 -> 18:14:40, provably
+# ONE read, since the polls are a minute apart. A stale replica, not the clear
+# un-happening: the account kept using the cleared window (19%) on both sides.
+LIVE_2026_09_08_CLEAR = [
+    (1788818196, 92, 1789191176, 1),  # 09-07 21:56:36, last row before the clear
+    (1788830556, 0, 1789435357, 1),  # 09-08 01:22:36, the clear
+    (1788834936, 1, 1789438339, 1),
+    (1788836020, 2, 1789438339, 1),
+    (1788836800, 3, 1789438339, 1),
+    (1788837220, 4, 1789438339, 1),
+    (1788837820, 5, 1789438339, 1),  # 03:23:40, the last idle read
+    (1788838960, 6, 1789438339, 1),  # 03:42:40, usage resumed: the watch closed
+    (1788840640, 7, 1789438339, 1),
+    (1788841420, 8, 1789438339, 1),
+    (1788841960, 9, 1789438339, 1),
+    (1788845800, 10, 1789438339, 1),
+    (1788849400, 11, 1789438339, 1),
+    (1788853120, 12, 1789438339, 1),
+    (1788910840, 13, 1789438339, 1),
+    (1788912400, 14, 1789438339, 1),
+    (1788912760, 15, 1789438339, 1),
+    (1788913540, 16, 1789438339, 1),
+    (1788934180, 17, 1789438339, 1),
+    (1788938500, 18, 1789438339, 1),
+    (1788964900, 19, 1789438339, 1),  # 09-09 14:41:40
+]
+LIVE_2026_09_09_FLAPS = [
+    [(1788973000, 92, 1789191176, 1), (1788975640, 19, 1789438339, 1)],  # 16:56:40
+    [(1788977620, 92, 1789191176, 1), (1788977680, 19, 1789438339, 1)],  # 18:13:40
+]
+PRE_CLEAR_ANCHOR = 1789191176
+
+
+class StaleReplicaTest(unittest.TestCase):
+    """One revert read is not a revert (REVERT_POLLS, 2026-09-09)."""
+
+    def replay(self, rows):
+        d = qp.Detector()
+        return d, feed(d, [sample(t, used, anchor, credits=c) for t, used, anchor, c in rows])
+
+    def test_the_2026_09_09_reads_cannot_withdraw_a_clear_still_under_watch(self):
+        # On the day the watch had closed 39 hours earlier, at 6%. This is the
+        # path the 2026-10-11 backtest named: the same reads, verbatim, landing
+        # while the cleared window still idled (the rows from 6% to 19% left
+        # out). With one read enough, each flap retracted the 09-08 clear.
+        idle = LIVE_2026_09_08_CLEAR[:7]
+        for flap in LIVE_2026_09_09_FLAPS:
+            with self.subTest(at=flap[0][0]):
+                d, events = self.replay(idle + flap)
+                self.assertEqual([e["kind"] for e in events], [qp.EVENT_CLEAR])
+                self.assertEqual(events[0]["prior_active_resets_at"], PRE_CLEAR_ANCHOR)
+                # The stale read itself is the revert signature exactly.
+                self.assertTrue(
+                    qp.is_revert(events[0], sample(flap[0][0], 92, PRE_CLEAR_ANCHOR))
+                )
+                # 19% on the post-clear anchor is usage resuming: watch closed.
+                self.assertIsNone(d.slots["codex/10080"]["pending"])
+
+    def test_a_held_revert_read_breaks_the_run_of_confirming_reads(self):
+        # 91, 0, 92 (old anchor), 0, 0: the clear may only be confirmed by two
+        # idle reads in a row, so not at the read right after the doubt.
+        d = qp.Detector()
+        old = 1_000_000
+        events = feed(d, [sample(0, 91, old), sample(60, 0, 60 + WEEK_SECONDS),
+                          sample(120, 92, old), sample(180, 0, 180 + WEEK_SECONDS)])
+        self.assertEqual(events, [])
+        (clear,) = d.observe(sample(240, 0, 240 + WEEK_SECONDS))
+        self.assertTrue(clear["confirmed"])
+        self.assertEqual(clear["confirmed_at"], 240)
+
+    def test_a_held_revert_read_keeps_the_first_reads_level_and_anchor(self):
+        # The retraction says when usage came back and to what: the FIRST
+        # revert read. The second only confirms it (commit 5c0c1de).
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS),
+                 sample(120, 0, 120 + WEEK_SECONDS)])
+        self.assertEqual(d.observe(sample(180, 70, old)), [])
+        (retraction,) = d.observe(sample(240, 85, old + 86400))
+        self.assertEqual(retraction["kind"], qp.EVENT_RETRACTION)
+        self.assertEqual(
+            (retraction["reverted_at"], retraction["used_at_revert"],
+             retraction["resets_at_at_revert"], retraction["revert_confirmed_at"]),
+            (180, 70.0, old, 240),
+        )
+
+    def test_one_stale_read_while_idle_leaves_the_clear_and_its_id_alone(self):
+        # The backtest's scratch scenario: confirmed clear, idling at 2%, one
+        # read of the pre-clear level on the pre-clear anchor at minute 200.
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS)])
+        clear = d.observe(sample(120, 2, 120 + WEEK_SECONDS))[0]
+        self.assertTrue(clear["confirmed"])
+        self.assertEqual(d.observe(sample(60 * 200, 80, old)), [])
+        # The idle read after it is neither a retraction nor a fresh 80 -> 2
+        # clear under a new id (which would re-key a live incident).
+        self.assertEqual(d.observe(sample(60 * 201, 2, 60 * 201 + WEEK_SECONDS)), [])
+        pending = d.slots["codex/10080"]["pending"]
+        self.assertEqual(pending["event_id"], clear["event_id"])
+        self.assertNotIn("revert_read", pending)
+
+    def test_a_read_between_two_revert_reads_starts_the_count_again(self):
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS),
+                 sample(120, 0, 120 + WEEK_SECONDS)])
+        rows = [
+            sample(180, 80, old),                     # revert, held
+            sample(240, 0, 240 + WEEK_SECONDS),       # idle: count restarts
+            sample(300, 80, old),                     # revert, held again
+            sample(360, 1, 360 + WEEK_SECONDS),       # idle
+            sample(420, 92, old),                     # revert, held
+        ]
+        self.assertEqual(feed(d, rows), [])
+        events = d.observe(sample(480, 92, old))      # ...and held: withdrawn
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_RETRACTION])
+        self.assertEqual(events[0]["reverted_at"], 420)
+
+    def test_a_held_read_survives_a_restart(self):
+        d = qp.Detector()
+        old = 1_000_000
+        feed(d, [sample(0, 80, old), sample(60, 0, 60 + WEEK_SECONDS),
+                 sample(120, 0, 120 + WEEK_SECONDS), sample(180, 80, old)])
+        restored = qp.Detector(json.loads(json.dumps(d.cursor())))
+        events = restored.observe(sample(240, 80, old))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_RETRACTION])
+        self.assertEqual(events[0]["reverted_at"], 180)
+
+    def test_a_held_read_is_logged_for_the_owner(self):
+        d = qp.Detector()
+        feed(d, [sample(0, 80, 1_000_000), sample(60, 0, 60 + WEEK_SECONDS)])
+        with captured_log() as out:
+            d.observe(sample(120, 80, 1_000_000))
+        self.assertIn("REVERT READ held codex/10080 80%", out.getvalue())
 
 
 # ─── Sample de-duplication ───────────────────────────────────────────────────
@@ -829,6 +1003,38 @@ class IsAnchorJumpClearTest(unittest.TestCase):
                 sample(GAP_BEFORE_T, 100, None), sample(GAP_AFTER_T, 8, GAP_NEW_ANCHOR)
             )
         )
+
+    def test_an_anchor_the_window_held_before_the_gap_is_not_a_clear(self):
+        # 2026-09-09, as the sample log holds it: a stale replica's 92% on the
+        # pre-reset anchor, then 44 minutes on, 19% on the anchor the account
+        # had held since its 09-08 reset. Forward by 2.9 days, yet short of a
+        # window past anything inside the gap: the window went BACK to it.
+        stale, back = LIVE_2026_09_09_FLAPS[0]
+        self.assertFalse(
+            qp.is_anchor_jump_clear(
+                sample(stale[0], stale[1], stale[2]), sample(back[0], back[1], back[2])
+            )
+        )
+        # The boundary: a whole window past the read that opened the gap,
+        # less the server's rounding of a frozen anchor.
+        lattice = GAP_BEFORE_T + WEEK_SECONDS - qp.ANCHOR_JITTER_SECONDS
+        for anchor, expected in ((lattice, True), (lattice - 1, False)):
+            with self.subTest(short_by=GAP_BEFORE_T + WEEK_SECONDS - anchor):
+                self.assertEqual(
+                    qp.is_anchor_jump_clear(
+                        sample(GAP_BEFORE_T, 100, GAP_ANCHOR), sample(GAP_AFTER_T, 8, anchor)
+                    ),
+                    expected,
+                )
+        # Anthropic's lattice rolls on by exactly one window at expiry, and the
+        # 5-hour window is held to its own length, not the week's.
+        five_hours = 300 * 60
+        self.assertTrue(
+            qp.is_anchor_jump_clear(
+                sample(GAP_BEFORE_T, 100, GAP_BEFORE_T + 600, window=300),
+                sample(GAP_AFTER_T, 8, GAP_BEFORE_T + 600 + five_hours, window=300),
+            )
+        )
         self.assertFalse(
             qp.is_anchor_jump_clear(
                 sample(GAP_BEFORE_T, 100, GAP_ANCHOR), sample(GAP_AFTER_T, 8, None)
@@ -885,6 +1091,18 @@ class DetectorAnchorJumpTest(unittest.TestCase):
             d.observe(sample(GAP_BEFORE_T + 180, 20, GAP_BEFORE_T + 180 + WEEK_SECONDS)),
             [],
         )
+
+    def test_the_2026_09_09_flaps_as_recorded_are_not_a_clear(self):
+        # Every codex/10080 row the sample log holds from before the 09-08
+        # clear to 09-09 18:14:40, replayed as written: the one clear, kept,
+        # and nothing from either flap. Replaying the whole log this way
+        # yields every clear in docs/reset-attribution.md's table and, before
+        # the window-past-the-gap test, this one phantom besides.
+        rows = LIVE_2026_09_08_CLEAR + [r for flap in LIVE_2026_09_09_FLAPS for r in flap]
+        d = qp.Detector()
+        events = feed(d, [sample(t, used, anchor, credits=c) for t, used, anchor, c in rows])
+        self.assertEqual([e["event_id"] for e in events], ["codex/10080:1788830556"])
+        self.assertTrue(events[0]["confirmed"])
 
     def test_the_live_sample_stream_gains_no_extra_clears(self):
         # Regression guard for the replay: the 2026-09-02 rows re-anchor once
@@ -1197,6 +1415,28 @@ class AttributionTest(unittest.TestCase):
         self.assertEqual(verdict["classification"], qp.CLASS_GLOBAL)
         self.assertIn("reset-menu history", verdict["reason"])
 
+    def test_the_clear_says_whether_the_bank_was_itemised_on_both_sides(self):
+        # Contract, "credit, Codex": the list is an extra test, not required,
+        # so a count-only 1 -> 1 is still unattributed. What it changes is how
+        # much a sentence may claim (observation_sentences, the email).
+        for before_ids, after_ids, expected in (
+            ([CREDIT_1], [CREDIT_1], True),
+            ([], [], True),
+            (None, [CREDIT_1], False),
+            ([CREDIT_1], None, False),
+        ):
+            with self.subTest(before=before_ids, after=after_ids):
+                before, after = clear_pair(credit_ids=after_ids)
+                before = {**before, "credit_ids": before_ids}
+                verdict = qp.classify(before, after, 1_000_000)
+                self.assertEqual(verdict["classification"], qp.CLASS_UNATTRIBUTED)
+                self.assertIs(verdict["credit_itemised"], expected)
+                if expected:
+                    self.assertIn("no credit leaving it early", verdict["reason"])
+                else:
+                    self.assertNotIn("leaving", verdict["reason"])
+                    self.assertIn("count read on both sides", verdict["reason"])
+
     def test_a_check_value_nobody_wrote_down_does_not_pass(self):
         good = {"identity": "same", "plan": "same", "credit": "unspent",
                 "bracket": "tight", "local_trace": "none"}
@@ -1263,6 +1503,39 @@ class CreditLookbackTest(unittest.TestCase):
             events += d.observe(held(t, used, anchor, credits=credits, ids=None))
         self.assertEqual(events[0]["classification"], qp.CLASS_UNATTRIBUTED)
 
+    def fall_before_the_bracket(self, polls):
+        """Read every poll: the bank first reads 1 (from 2) `polls` polls
+        before the bracket opens, then the window clears a poll after it."""
+        lo = 600
+        rows = []
+        for t in range(0, lo + 1, 60):
+            credits = 1 if t >= lo - polls * 60 else 2
+            rows.append((t, 100.0, 1_000_000, credits))
+        rows += [(lo + 60, 0.0, lo + 60 + WEEK_SECONDS, 1),
+                 (lo + 120, 0.0, lo + 120 + WEEK_SECONDS, 1)]
+        clears = self.replay(rows)
+        self.assertEqual(len(clears), 1)
+        self.assertEqual(clears[0]["clear_bracket_lo"], lo)
+        return clears[0]
+
+    def test_a_fall_up_to_three_polls_before_the_bracket_is_self_applied(self):
+        # Every lookback test above puts the fall ONE poll before the bracket,
+        # which the reading in force when the span opened already covers, so
+        # narrowing the lookback to the bracket itself passed them all.
+        self.assertEqual(qp.CREDIT_LOOKBACK_POLLS, 3)  # the contract's number
+        for polls in range(1, qp.CREDIT_LOOKBACK_POLLS + 1):
+            with self.subTest(polls=polls):
+                clear = self.fall_before_the_bracket(polls)
+                self.assertEqual(clear["classification"], qp.CLASS_SELF)
+                self.assertIn("banked credit count read 2", clear["reason"])
+
+    def test_a_fall_a_poll_beyond_the_lookback_is_not_the_owners(self):
+        # The bank read the lower count on every poll from four polls before
+        # the bracket: the span the contract looks at never saw the 2.
+        clear = self.fall_before_the_bracket(qp.CREDIT_LOOKBACK_POLLS + 1)
+        self.assertEqual(clear["classification"], qp.CLASS_UNATTRIBUTED)
+        self.assertEqual(clear["checks"]["credit"], "unspent")
+
     def test_a_credit_leaving_with_the_count_unchanged_is_self_applied(self):
         # A redemption and a grant between two polls cancel in the count.
         d = qp.Detector()
@@ -1293,6 +1566,31 @@ class CreditLookbackTest(unittest.TestCase):
         # ...and at or before the read that showed the clear, it expired.
         at_hi = {**later, "expires_at": 60}
         self.assertIsNone(qp.credit_left([{"t": 0, "count": 1, "ids": [at_hi]}], 0, 60, 1, [], 60))
+
+    def test_the_expiry_boundary_is_the_read_that_showed_the_clear(self):
+        # Gone at or before `hi`, a credit may simply have expired; gone while
+        # its expiry was still ahead, it was spent. Only expires_at=60 (== hi)
+        # and a date years out were pinned, so moving the boundary by a day
+        # passed: a credit redeemed an hour before its own expiry read as
+        # expired and the clear could stay unattributed.
+        lo, hi = 0, 60
+        for expires_at, spent in ((hi, False), (hi + 1, True), (hi + 3600, True)):
+            with self.subTest(after_hi=expires_at - hi):
+                credit = {"id": "c00000000005", "expires_at": expires_at}
+                why = qp.credit_left([{"t": lo, "count": 1, "ids": [credit]}], lo, hi, 1, [], 60)
+                self.assertEqual(why is not None, spent)
+
+    def test_a_credit_spent_an_hour_before_its_expiry_makes_the_clear_self_applied(self):
+        # The same boundary as the Detector applies it, count unchanged
+        # because a second credit arrived in the same interval.
+        for expires_in, expected in ((0, qp.CLASS_UNATTRIBUTED), (3600, qp.CLASS_SELF)):
+            with self.subTest(expires_in=expires_in):
+                soon = {"id": "c00000000006", "expires_at": 60 + expires_in}
+                d = qp.Detector()
+                d.observe(held(0, 90, 1_000_000, ids=[soon]))
+                d.observe(held(60, 0, 60 + WEEK_SECONDS, ids=[CREDIT_2]))
+                event = d.observe(held(120, 0, 120 + WEEK_SECONDS, ids=[CREDIT_2]))[0]
+                self.assertEqual(event["classification"], expected)
 
     def test_classify_reads_the_lookback_itself(self):
         # The Detector's late refresh repeats this test a poll later, which
@@ -1396,6 +1694,42 @@ class AccountChangeTest(unittest.TestCase):
         clear = d.observe(held(300, 0, 300 + WEEK_SECONDS, credits=0, ids=[], account_fp=FP_B))[0]
         self.assertEqual(clear["classification"], qp.CLASS_UNATTRIBUTED)
 
+    def test_a_switch_to_a_fuller_bank_is_not_a_credit_grant(self):
+        # The old account's 0 is not a bank the new account's 2 grew from: a
+        # grant here would be filed as account a's banked credit landing
+        # (groundtruth.credit_grant_since).
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000, credits=0, ids=[]))
+        events = d.observe(held(60, 50, 1_000_000, credits=2, ids=[CREDIT_1, CREDIT_2],
+                                account_fp=FP_B))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        state = d.slots["codex/10080"]
+        self.assertEqual(state["credits_known"], {"value": 2, "t": 60})
+        self.assertEqual(state["credit_ids_known"], [CREDIT_1, CREDIT_2])
+        # ...and a grant on the NEW account is still seen.
+        events = d.observe(held(120, 50, 1_000_000, credits=3, ids=[CREDIT_1, CREDIT_2],
+                                account_fp=FP_B))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_CREDIT_GRANTED])
+        self.assertEqual(events[0]["credits_before"], 2)
+
+    def test_a_switch_read_without_a_bank_keeps_nothing_of_the_old_one(self):
+        # The new account's first row cannot read its bank, so nothing it
+        # carries can overwrite the old account's credit state: rebaseline()
+        # alone must drop it, or a None reading would fall back to the OLD
+        # account's count and itemisation.
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000, credits=2, ids=[CREDIT_1, CREDIT_2]))
+        d.observe(held(60, 50, 1_000_000, credits=None, ids=None))
+        d.observe(held(120, 50, 1_000_000, credits=None, ids=None))
+        events = d.observe(held(180, 50, 2_000_000, credits=None, ids=None, account_fp=FP_B))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        state = d.slots["codex/10080"]
+        self.assertNotIn("credits_known", state)
+        self.assertNotIn("credit_ids_known", state)
+        self.assertNotIn("credit_trail", state)
+        # This row's own absence, not the old account's streak plus one.
+        self.assertEqual(state["credits_absent"], 1)
+
     def test_a_switch_seen_through_an_unread_row_is_still_a_switch(self):
         d = qp.Detector()
         d.observe(held(0, 50, 1_000_000))
@@ -1403,6 +1737,19 @@ class AccountChangeTest(unittest.TestCase):
         events = d.observe(held(120, 50, 1_000_000, account_fp=FP_B))
         self.assertEqual(events[0]["kind"], qp.EVENT_ACCOUNT_CHANGE)
         self.assertEqual(events[0]["account_fp_before"], FP_A)
+
+    def test_a_plan_switch_seen_through_an_unread_plan_is_still_a_switch(self):
+        # The plan twin of the case above, on one fingerprint: the 2026-09-19
+        # pro -> prolite switch read through a poll whose plan was unread.
+        # Compared with the adjacent row only, None -> prolite is "unread"
+        # and the switch would pass with no re-baseline.
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000, plan="pro"))
+        self.assertEqual(d.observe(held(60, 50, 1_000_000, plan=None)), [])
+        events = d.observe(held(120, 50, 1_000_000, plan="prolite"))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        self.assertEqual((events[0]["plan_before"], events[0]["plan_after"]), ("pro", "prolite"))
+        self.assertEqual(events[0]["checks"], {"identity": "same", "plan": "changed"})
 
     def test_an_unreadable_identity_is_never_a_switch(self):
         d = qp.Detector()
@@ -1844,6 +2191,20 @@ class ExportTest(unittest.TestCase):
         self.assertTrue(first["retracted"])
         self.assertFalse(second["public"])
 
+    def test_a_retracted_natural_expiry_is_withheld_too(self):
+        # The case above is a global_candidate, private before the retraction
+        # check is reached, so is_public() could ignore retractions with the
+        # suite green. A scheduled expiry is the clear that IS public until
+        # withdrawn: the control publishes it, the retraction must not.
+        natural = clear_event("n", qp.CLASS_NATURAL)
+        (alone,) = self.export([natural])["observations"]
+        self.assertTrue(alone["public"])
+        withdrawn = {**natural, "kind": qp.EVENT_RETRACTION, "confirmed": False}
+        first, second = self.export([natural, withdrawn])["observations"]
+        self.assertTrue(first["retracted"])
+        self.assertFalse(first["public"])
+        self.assertFalse(second["public"])
+
     def test_the_original_event_fields_are_carried_through(self):
         payload = self.export([clear_event()])
         observation = payload["observations"][0]
@@ -2200,9 +2561,28 @@ class SentenceTest(unittest.TestCase):
             "that this probe can see.",
         )
         self.assertIn("read on both sides of a 60-second bracket", row["evidence"])
-        self.assertIn("read 1 then 1 with no credit leaving the bank", row["evidence"])
         self.assertIn("cannot say whose reset this was", row["evidence"])
         self.assertFalse(row["public"])
+        # 2026-08-30 read the COUNT only (no credits[] then), so the sentence
+        # says what was measured and claims nothing about credits leaving: a
+        # grant and a redemption between two polls cancel in a count.
+        self.assertIn("the banked credit count read 1 then 1. ", row["evidence"])
+        self.assertNotIn("no credit leaving", row["evidence"])
+        itemised = observe({**LIVE_2026_08_30, "classification": qp.CLASS_UNATTRIBUTED,
+                            "credit_itemised": True})
+        self.assertIn(
+            "read 1 then 1 with no credit leaving the bank before its expiry.",
+            itemised["evidence"],
+        )
+
+    def test_only_a_literal_true_earns_the_itemised_clause(self):
+        # A legacy record has no field; a hand-edited one may hold a string.
+        for value in (None, False, "true", 1):
+            with self.subTest(value=value):
+                record = {**LIVE_2026_08_30, "classification": qp.CLASS_UNATTRIBUTED}
+                if value is not None:
+                    record["credit_itemised"] = value
+                self.assertNotIn("no credit leaving", observe(record)["evidence"])
 
     def test_an_account_change_names_what_changed_and_no_fingerprint(self):
         row = observe(SEP_19_CHANGE)

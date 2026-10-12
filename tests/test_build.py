@@ -10,7 +10,7 @@ import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from scripts import build
+from scripts import build, incidents
 from scripts.build import (
     OBSERVED_CONFIRMED,
     OBSERVED_NOT_SEEN,
@@ -507,6 +507,95 @@ class StaticAndInteractiveParityTests(unittest.TestCase):
         self.assertIn(f"PROBE_STALE_SECONDS = {PROBE_STALE_SECONDS}", self.app_js)
         self.assertIn(f"OBSERVATIONS_SHOWN = {OBSERVATIONS_SHOWN}", self.app_js)
 
+    SEEN_CASES = [
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset", "accounts": ["a", "b"],
+                       "lead_minutes": 3}}, "Seen on two of our accounts 3 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": 2}}, "Seen on our account 2 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["b"],
+                       "lead_minutes": -23}}, "Seen on our account 23 min after this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["b"],
+                       "lead_minutes": 0}}, "Seen on our account within a minute of this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b"], "lead_minutes": 79}},
+         "Seen on two of our accounts 1 h 19 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b"], "lead_minutes": -120}},
+         "Seen on two of our accounts 2 h after this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b", "c"], "lead_minutes": 5}},
+         "Seen on three of our accounts 5 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b", "c", "d", "e"], "lead_minutes": 5}},
+         "Seen on 5 of our accounts 5 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": 2.0}}, "Seen on our account 2 min before this post"),
+        # Nothing a reader could misread as a confirmation draws anything.
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset", "accounts": ["a"],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset", "accounts": ["a", "a"],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": [],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "natural_expiry", "accounts": ["a"],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "not_seen"}}, ""),
+        ({"observed": {"status": "unprobed"}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": "2"}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": True}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": 2.5}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": "a",
+                       "lead_minutes": 2}}, ""),
+        ({"observed": ["confirmed"]}, ""),
+        ({}, ""),
+    ]
+
+    def test_the_seen_line_reads_alike_in_both_renderers(self):
+        # The methodology promises a confirmed announcement shows when our
+        # own account saw it (privacy review); neither renderer drew it.
+        for event, expected in self.SEEN_CASES:
+            with self.subTest(event=event):
+                self.assertEqual(build.seen_line(event), expected)
+        node = shutil.which("node")
+        if node is None:
+            raise unittest.SkipTest("node is not available on this machine")
+        app_js = Path(build.SITE_DIR) / "app.js"
+        harness = f"""
+        const src = require('fs').readFileSync({str(app_js)!r}, 'utf8');
+        // `var`: a `const` declared inside eval stays inside that eval.
+        eval(src.match(/const SEEN_COUNT_WORDS[^\\n]*/)[0].replace(/^const /, "var "));
+        eval(src.match(/function seenSpan[\\s\\S]*?\\n}}/)[0]);
+        eval(src.match(/function seenLine[\\s\\S]*?\\n}}/)[0]);
+        const cases = JSON.parse(process.env.SEEN_CASES);
+        console.log(JSON.stringify(cases.map((event) => seenLine(event))));
+        """
+        result = subprocess.run(
+            [node, "-e", harness], capture_output=True, text=True, timeout=60,
+            env={**os.environ, "SEEN_CASES": json.dumps([event for event, _ in self.SEEN_CASES])},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for (event, expected), js in zip(self.SEEN_CASES, json.loads(result.stdout)):
+            with self.subTest(event=event):
+                self.assertEqual(js, expected)
+        self.assertIn('"event-seen"', self.app_js)
+
+    def test_the_static_feed_draws_the_seen_line_and_nothing_private(self):
+        event = trusted_event("2109132167112782291", announced_at=1791700000,
+                              url="https://x.com/thsottiaux/status/2109132167112782291")
+        event["observed"] = {"status": "confirmed", "observed_at": "2026-10-11T04:00:00Z",
+                             "lead_seconds": 120, "lead_minutes": 2, "verdict": "unattributed",
+                             "accounts": ["a"]}
+        markup = build.build_event_rows([(None, "openai", event)])
+        self.assertIn('<p class="event-seen">Seen on our account 2 min before this post</p>',
+                      markup)
+        for private in ("unattributed", "2026-10-11T04:00:00Z", "lead_"):
+            self.assertNotIn(private, markup)
+        event["observed"] = {"status": "not_seen"}
+        self.assertNotIn("event-seen", build.build_event_rows([(None, "openai", event)]))
+
     def test_the_tracking_badge_is_gone_from_both(self):
         self.assertNotIn('["Tracking"]', self.app_js)
         self.assertNotIn(">Tracking<", (Path(build.SITE_DIR) / "index.template.html").read_text(encoding="utf-8"))
@@ -750,7 +839,8 @@ class FusionTests(unittest.TestCase):
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
         return vendors[key]["events"]
 
-    def clear(self, *, t, classification="global_candidate", event_id=None, confirmed=True):
+    def clear(self, *, t, classification="global_candidate", event_id=None, confirmed=True,
+              **edit):
         return {
             "event_id": event_id or f"codex/10080:{t}",
             "kind": "clear",
@@ -760,6 +850,7 @@ class FusionTests(unittest.TestCase):
             "used_after": 0.0,
             "classification": classification,
             "confirmed": confirmed,
+            **edit,
         }
 
     def test_a_fresh_trusted_announcement_is_announced_with_its_key(self):
@@ -832,7 +923,10 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(events["status"], "announced")
 
     def test_a_retracted_clear_under_an_announcement_is_reverted(self):
-        clear = self.clear(t=FUSION_NOW - 3500)
+        # A clear that, while it stood, confirmed this post: one account's
+        # unattributed clear 100 s after a trusted retrospective post.
+        clear = self.clear(t=FUSION_NOW - 3500, classification="unattributed",
+                           window_family="codex/10080")
         self.write_probe_log(
             [
                 clear,
@@ -845,6 +939,34 @@ class FusionTests(unittest.TestCase):
         )
         (events,) = self.fuse([trusted_event("100", announced_at=FUSION_NOW - 3600)])
         self.assertEqual(events["status"], "reverted_on_our_account")
+
+    def test_only_a_withdrawal_that_would_have_confirmed_the_post_reverts_it(self):
+        # Review case [20]'s rule: a withdrawn clear speaks against a post only
+        # if, while it stood, it would have confirmed that post, on a window
+        # that can pair. Each of these was withdrawn near a trusted post and
+        # never could have confirmed it, so the post stays `announced`.
+        for name, edit in {
+            "a 5-hour session clear": {"classification": "session_only",
+                                       "window_family": "session"},
+            "an unresolved clear": {"classification": "global_candidate",
+                                    "window_family": "codex/10080"},
+            "a natural expiry": {"classification": "natural_expiry",
+                                 "window_family": "codex/10080"},
+            "a model-scoped window": {"classification": "unattributed",
+                                      "window_family": "weekly_scoped:opus"},
+            "no window on record": {"classification": "unattributed"},
+            "a malformed window": {"classification": "unattributed",
+                                   "window_family": ["codex/10080"]},
+            "outside the single-account window": {"classification": "unattributed",
+                                                  "window_family": "codex/10080",
+                                                  "detected_at": FUSION_NOW - 3600 + 3601},
+        }.items():
+            with self.subTest(case=name):
+                t = edit.pop("detected_at", FUSION_NOW - 3500)
+                clear = self.clear(t=t, **edit)
+                self.write_probe_log([clear, {"kind": "retraction", "event_id": clear["event_id"]}])
+                (events,) = self.fuse([trusted_event("100", announced_at=FUSION_NOW - 3600)])
+                self.assertEqual(events["status"], "announced")
 
     def test_an_unverified_row_is_a_candidate_and_never_mails(self):
         (events,) = self.fuse(
@@ -904,6 +1026,65 @@ class VendorResetPublicationTests(unittest.TestCase):
             self.assertNotIn("codex/10080", json.dumps(row))
             for private in ("classification", "attribution", "public", "kind"):
                 self.assertNotIn(private, row)
+
+    def test_a_published_id_cannot_confirm_a_guessed_model_name(self):
+        # Privacy review: every part of a scoped event id but the model slug
+        # is on the public row (account, window shape, time), so a digest of
+        # the raw id let anyone hash a guessed codename and compare.
+        import hashlib
+
+        def old_digest(raw):
+            return "obs-" + hashlib.sha256(f"ai-resets/observation:{raw}".encode()).hexdigest()[:12]
+
+        t = 1791700000
+        ids = {
+            ("a", "secret-codename-7"): f"claude:a:weekly_scoped:secret-codename-7/10080:{t}",
+            ("b", "secret-codename-7"): f"claude:b:weekly_scoped:secret-codename-7/10080:{t}",
+            ("a", "opus"): f"claude:a:weekly_scoped:opus/10080:{t}",
+        }
+        rows = []
+        for (account, _), raw in ids.items():
+            witness = ids[("b" if account == "a" else "a", "secret-codename-7")]
+            rows.append({
+                "event_id": raw, "kind": "clear", "classification": "unattributed",
+                "account": account, "verdict": "vendor_reset", "public": True,
+                "attribution": "two_accounts", "witness": witness,
+                "observed_at": fusion_iso(t), "window": "weekly",
+                "headline": "Our Claude Code weekly window scoped to one model cleared early.",
+            })
+        published = public_observations(rows)
+        self.assertEqual(len(published), 3)
+        blob = json.dumps(published)
+        self.assertNotIn("codename", blob)
+        public = {r["event_id"] for r in published} | {r["witness"] for r in published}
+        for guess in ("opus", "sonnet", "secret-codename-7"):
+            for account in ("a", "b"):
+                guessed = old_digest(f"claude:{account}:weekly_scoped:{guess}/10080:{t}")
+                self.assertNotIn(guessed, public)
+        # The model is replaced by its rank among that account's scoped
+        # windows at that moment, so two of them still get two ids.
+        a_ids = {r["event_id"] for r in published if r["account"] == "a"}
+        self.assertEqual(len(a_ids), 2)
+        self.assertEqual(
+            build.published_ids(list(ids.values()))[ids[("a", "opus")]],
+            old_digest(f"claude:a:weekly_scoped:#0/10080:{t}"),
+        )
+        self.assertEqual(
+            build.published_ids(list(ids.values()))[ids[("a", "secret-codename-7")]],
+            old_digest(f"claude:a:weekly_scoped:#1/10080:{t}"),
+        )
+
+    def test_an_id_without_a_model_keeps_the_digest_production_filed(self):
+        # The notifier's event keys are these digests: none may move.
+        import hashlib
+        for raw in ("codex/10080:1788143216", "b:codex/10080:1791700060",
+                    "claude:b:weekly_all/10080:1790792305", "claude:a:session/300:1791687186"):
+            with self.subTest(raw=raw):
+                expected = "obs-" + hashlib.sha256(
+                    f"ai-resets/observation:{raw}".encode()).hexdigest()[:12]
+                self.assertEqual(build.published_id(raw), expected)
+                self.assertEqual(build.published_ids([raw, "claude:a:weekly_scoped:x/10080:1"])[raw],
+                                 expected)
 
     def test_a_row_without_its_witness_beside_it_is_dropped(self):
         cases = {
@@ -1029,7 +1210,8 @@ class ProbeFirstFusionTests(unittest.TestCase):
                 "window_minutes": 10080, "used_before": 60.0, "used_after": 0.0,
                 "clear_bracket_lo": at - 60, "clear_bracket_hi": at,
                 "account_fp_before": fp, "account_fp_after": fp,
-                "classification": "unattributed", "confirmed": True, **edit,
+                "classification": "unattributed", "confirmed": True,
+                "confirmed_at": at + 120, **edit,
             }
         return [one("a", "aaaaaaaaaaaa", t), one("b", "bbbbbbbbbbbb", t + gap)]
 
@@ -1099,13 +1281,97 @@ class ProbeFirstFusionTests(unittest.TestCase):
         vendor = self.fuse_pair(clears + [expiry], [post])
         self.assertEqual(vendor["events"][0]["status"], "confirmed")
 
+    def test_the_confirmation_rule_not_the_verdict_table_picks_the_match(self):
+        # Mutation review: a lone unattributed clear 2 h AFTER a trusted post
+        # is outside the single-account window ([-3 h, +1 h]), so it confirms
+        # nothing, however much nearer it sits than the pair 3 h after. A
+        # match by verdict alone took it, and the post fell to `announced`.
+        post_at = FUSION_NOW - 4 * 3600
+        post = trusted_event("100", announced_at=post_at)
+        lone = {"key": "u", "t": post_at + 2 * 3600, "verdict": "unattributed", "retracted": False}
+        pair = {"key": "v", "t": post_at + 3 * 3600, "verdict": "vendor_reset", "retracted": False,
+                "witness": "w"}
+        match = build.match_observation(post, [lone, pair])
+        self.assertEqual(match["key"], "v")
+        self.assertEqual(incidents.derive_status(post, match, None, now=fusion_iso(FUSION_NOW)),
+                         "confirmed")
+        # The same through fusion: the pair confirms the post and is its own.
+        clears = self.pair(post_at + 3 * 3600)
+        single = dict(clears[0], event_id="c:codex/10080:y", account="c",
+                      account_fp_before="cccccccccccc", account_fp_after="cccccccccccc",
+                      detected_at=post_at + 2 * 3600, clear_bracket_hi=post_at + 2 * 3600,
+                      clear_bracket_lo=post_at + 2 * 3600 - 60)
+        vendor = self.fuse_pair(clears + [single], [post])
+        self.assertEqual(vendor["events"][0]["status"], "confirmed")
+        self.assertIn("merged_from", vendor["events"][0])
+
+    def test_standing_evidence_outranks_a_nearer_withdrawal(self):
+        # Account a cleared, reverted, then cleared again beside account b.
+        # The withdrawn first clear sits nearest the post; the pair still
+        # stands, so the post is confirmed and takes the pair over, instead of
+        # being called reverted while the pair mails "not announced yet".
+        post_at = FUSION_NOW - 3 * 3600
+        a, b = self.pair(post_at + 1800)
+        first = dict(a, event_id="a:codex/10080:first", detected_at=post_at + 60,
+                     clear_bracket_lo=post_at, clear_bracket_hi=post_at + 60,
+                     confirmed_at=post_at + 180)
+        withdrawn = {"kind": "retraction", "event_id": first["event_id"],
+                     "reverted_at": post_at + 900}
+        vendor = self.fuse_pair([first, withdrawn, a, b], [trusted_event("100", announced_at=post_at)])
+        (event,) = vendor["events"]
+        self.assertEqual(event["status"], "confirmed")
+        self.assertIn("merged_from", event)
+        self.assertFalse(any("status" in row for row in vendor["observations"]))
+
+    def test_a_withdrawn_pair_speaks_as_the_pair_it_was(self):
+        # Two hours after the post is too late for one account's clear to
+        # confirm it, but a two-account pair has the full +-6 h. When one half
+        # of a pair that stood is withdrawn, the post is reverted on our
+        # account: the pair confirmed it, and the pair is gone.
+        post_at = FUSION_NOW - 5 * 3600
+        a, b = self.pair(post_at + 2 * 3600)
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"],
+                     "reverted_at": post_at + 3 * 3600}
+        vendor = self.fuse_pair([a, b, withdrawn], [trusted_event("100", announced_at=post_at)])
+        self.assertEqual(vendor["events"][0]["status"], "reverted_on_our_account")
+
+    def test_only_a_post_the_pair_confirms_takes_it_over(self):
+        # Review case [20]: a post that ends up anything but `confirmed` must
+        # leave the pair its own incident; claimed, the pair lost its status
+        # row and nobody was mailed at all. A post discovered two days late
+        # is `historical` (never mailed), whatever the pair says.
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        late = trusted_event("100", announced_at=FUSION_NOW - 3 * 3600 + 300,
+                             first_seen_at=fusion_iso(FUSION_NOW - 3 * 3600 + 300 + 49 * 3600))
+        vendor = self.fuse_pair(clears, [late])
+        self.assertEqual(vendor["events"][0]["status"], "historical")
+        self.assertNotIn("merged_from", vendor["events"][0])
+        self.assertEqual([r.get("status") for r in vendor["observations"] if "status" in r],
+                         ["observed"])
+
+    def test_a_three_account_cascade_is_one_incident(self):
+        a, b = self.pair(FUSION_NOW - 3 * 3600)
+        c = dict(b, event_id="c:codex/10080:x", account="c",
+                 account_fp_before="cccccccccccc", account_fp_after="cccccccccccc",
+                 detected_at=b["detected_at"] + 600, clear_bracket_hi=b["clear_bracket_hi"] + 600,
+                 clear_bracket_lo=b["clear_bracket_lo"] + 600)
+        rows = self.fuse_pair([a, b, c])["observations"]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["incident_key"] for r in rows},
+                         {f"openai:probe-weekly-{FUSION_NOW - 3 * 3600 - 60}"})
+        self.assertEqual([r["status"] for r in rows if "status" in r], ["observed"])
+        self.assertEqual(rows[0]["accounts"], ["a", "b", "c"])
+
     def test_a_third_account_keeps_the_incident_standing_after_one_is_withdrawn(self):
         a, b = self.pair(FUSION_NOW - 3 * 3600)
         c = dict(b, event_id="c:codex/10080:x", account="c",
                  account_fp_before="cccccccccccc", account_fp_after="cccccccccccc",
                  detected_at=b["detected_at"] + 60, clear_bracket_hi=b["clear_bracket_hi"] + 60,
                  clear_bracket_lo=b["clear_bracket_lo"] + 60)
-        withdrawn = {"kind": "retraction", "event_id": b["event_id"]}
+        # Withdrawn well after all three stood, so only the third account's
+        # live clear can be what keeps a correction from being written.
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"],
+                     "reverted_at": FUSION_NOW - 3600}
         self.write_probe_log([a, b, c, withdrawn])
         from scripts import attribution, quota_probe as qp
         exported = public_observations(
@@ -1167,7 +1433,9 @@ class ProbeFirstFusionTests(unittest.TestCase):
     def test_a_withdrawn_half_turns_the_incident_into_a_retraction_row(self):
         clears = self.pair(FUSION_NOW - 3 * 3600)
         rows = self.exported(clears)
-        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"]}
+        # Withdrawn after the mail hold ran out, so a mail may have gone.
+        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
+                     "reverted_at": FUSION_NOW - 1800}
         self.write_probe_log(clears + [withdrawn])
         vendors = {"openai": {"events": [], "observations": []}}
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
@@ -1175,8 +1443,46 @@ class ProbeFirstFusionTests(unittest.TestCase):
         self.assertEqual((row["status"], row["verdict"]), ("retracted", None))
         self.assertEqual(row["incident_key"], f"openai:probe-weekly-{FUSION_NOW - 3 * 3600 - 60}")
         self.assertEqual(row["event_id"], min(r["event_id"] for r in rows if r["account"] == "a"))
-        self.assertNotIn("headline", row)
+        # Exactly what the notifier needs, and what check_site admits: no
+        # clears, labels or times a reader could learn a clear from.
+        from scripts import check_site
+        self.assertEqual(set(row), set(check_site.WITHDRAWN_FIELDS))
         self.assertEqual(build_observations(vendors["openai"]), "")
+
+    def test_a_clear_withdrawn_before_its_partner_cleared_is_never_published(self):
+        # Privacy review, RetractedBeforeWitness: a's clear is taken back
+        # 5 minutes after it happened, and b clears 25 minutes after that.
+        # There was never a pair, so there is nothing to correct, and the old
+        # correction row published b's lone clear with its time and levels.
+        a, b = self.pair(FUSION_NOW - 3 * 3600, gap=1800)
+        withdrawn = {"kind": "retraction", "event_id": a["event_id"],
+                     "reverted_at": a["detected_at"] + 300}
+        self.write_probe_log([a, b, withdrawn])
+        vendors = {"openai": {"events": [], "observations": []}}
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        self.assertEqual(vendors["openai"]["observations"], [])
+
+    def test_a_pair_withdrawn_inside_the_mail_hold_leaves_no_row(self):
+        # Privacy re-verification: a pair can form and break between two
+        # five-minute publishes. It was never shown and could not yet have
+        # been mailed, so a correction row would be the only public trace of
+        # the clear that still stands, and its key and digest gave away that
+        # clear's account and second.
+        clears = self.pair(FUSION_NOW - 3 * 3600)
+        later = max(c["detected_at"] for c in clears)
+        for reverted, rows in (
+            (later + 240, 0),
+            (later + incidents.OBSERVED_HOLD_SECONDS - 1, 0),
+            (later + incidents.OBSERVED_HOLD_SECONDS, 1),
+        ):
+            with self.subTest(after=reverted - later):
+                withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
+                             "reverted_at": reverted}
+                self.write_probe_log(clears + [withdrawn])
+                vendors = {"openai": {"events": [], "observations": []}}
+                with contextlib.redirect_stdout(io.StringIO()):
+                    build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+                self.assertEqual(len(vendors["openai"]["observations"]), rows)
 
     def test_a_withdrawn_half_is_found_even_when_the_other_read_disagree(self):
         # Claude: the first clear of a pair is written while the other account
@@ -1185,7 +1491,8 @@ class ProbeFirstFusionTests(unittest.TestCase):
         # correction must still go to whoever was mailed about the pair.
         clears = self.pair(FUSION_NOW - 3 * 3600)
         clears[0]["concordance"] = "accounts_disagree"
-        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"]}
+        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
+                     "reverted_at": FUSION_NOW - 1800}
         self.write_probe_log(clears + [withdrawn])
         vendors = {"openai": {"events": [], "observations": []}}
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))

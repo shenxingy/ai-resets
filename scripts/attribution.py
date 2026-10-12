@@ -50,6 +50,17 @@ PAIR_WINDOW_SECONDS = 60 * 60
 # accounts reset together is what an owner short of quota does.
 AT_LIMIT_PERCENT = 95.0
 
+# The only windows a pair may form on: each vendor's PRIMARY weekly window,
+# as the probes name it (quota_probe.window_family() for Codex's base limit,
+# claude_probe.window_key() for Claude's all-models window;
+# tests/test_attribution.py asserts both spellings). A vendor reset clears the
+# per-model and secondary weekly windows too (`weekly_scoped:<model>`,
+# Codex's `codex_bengalfox`), often a poll apart, and each of those pairing
+# on its own made one reset two incidents and two mails. They also let a pair
+# both at its limit on the primary window escape AT_LIMIT_PERCENT through a
+# scoped window that was not. One reset, one window it is judged on.
+PAIRING_FAMILIES = frozenset({"codex/10080", "weekly_all"})
+
 # What attribute() stamps on a clear it upgrades. Every one of these is
 # removed from the input first, so a value already on a record can never
 # survive into the output on its own say-so.
@@ -103,7 +114,9 @@ def is_candidate(event: Any, retracted: set[str]) -> bool:
     to be on record on both sides and unchanged — a legacy row with no
     fingerprint never pairs, because "a different account" is exactly what
     this rule cannot assume. A record with no event id cannot be named as
-    anyone's witness, so it cannot be one.
+    anyone's witness, so it cannot be one. Only a clear on a PAIRING_FAMILIES
+    window qualifies: a per-model or secondary window stays `unattributed`
+    and private whatever the other account's did.
     """
     if not isinstance(event, dict) or not _is_clear(event):
         return False
@@ -115,7 +128,10 @@ def is_candidate(event: Any, retracted: set[str]) -> bool:
     after = _text(event.get("account_fp_after"))
     if after is None or _text(event.get("account_fp_before")) != after:
         return False
-    if _text(event.get("account")) is None or _text(event.get("window_family")) is None:
+    if _text(event.get("account")) is None:
+        return False
+    # _text first: a malformed (unhashable) value must read as "not one".
+    if _text(event.get("window_family")) not in PAIRING_FAMILIES:
         return False
     return _epoch(event.get("clear_bracket_hi")) is not None
 
@@ -220,22 +236,82 @@ def pair_components(pairs: dict[str, str | None]) -> list[tuple[str, ...]]:
     return sorted(tuple(sorted(members)) for members in groups.values())
 
 
+def reverted_at(events: Iterable[Any]) -> dict[str, int | None]:
+    """event_id -> when its clear first reverted, from its retraction records.
+
+    The earliest `reverted_at` on record (the probe stamps the first of the
+    revert reads it needed); None for a retraction that carries no readable
+    time, which nothing downstream may read as "early enough".
+    """
+    found: dict[str, int | None] = {}
+    for event in events:
+        if not isinstance(event, dict) or event.get("kind") != EVENT_RETRACTION:
+            continue
+        event_id = _text(event.get("event_id"))
+        if event_id is None:
+            continue
+        moment = _epoch(event.get("reverted_at"))
+        if event_id not in found:
+            found[event_id] = moment
+        elif found[event_id] is not None and moment is not None:
+            found[event_id] = min(found[event_id], moment)
+        else:
+            # One unreadable record makes the whole answer unreadable: a
+            # guess here decides whether a lone clear's time is published.
+            found[event_id] = None
+    return found
+
+
+def was_live(
+    group: Iterable[str],
+    clears: dict[str, dict[str, Any]],
+    reverted: dict[str, int | None],
+) -> bool:
+    """Did this group ever stand as a pair before a retraction broke it?
+
+    Only if every member's clear was confirmed, and every retracted member
+    reverted strictly AFTER the last member's confirmation. A clear withdrawn
+    before its partner existed never made a pair: grouping with retractions
+    ignored still joins the two, and publishing that group's correction
+    published a lone `unattributed` clear on the other account, which the
+    contract keeps private (privacy review, RetractedBeforeWitness). A time
+    that cannot be read cannot show the order, so it answers no.
+    """
+    confirmed: list[int] = []
+    withdrawn: list[int] = []
+    for event_id in group:
+        clear = clears.get(event_id)
+        moment = _epoch(clear.get("confirmed_at")) if clear and clear.get("confirmed") else None
+        if moment is None:
+            return False
+        confirmed.append(moment)
+        if event_id in reverted:
+            if reverted[event_id] is None:
+                return False
+            withdrawn.append(reverted[event_id])
+    return bool(withdrawn) and min(withdrawn) > max(confirmed)
+
+
 def withdrawn_pairs(events: Iterable[Any]) -> list[tuple[str, ...]]:
-    """The groups the rule formed before a retraction broke them.
+    """The groups the rule formed, stood as pairs, and a retraction then broke.
 
     The same rule run with retractions ignored, minus every group that still
     has a live member: without a retraction the two runs agree, so only a
     withdrawn clear can leave a group here. A member still live means the
     reset still stands on other accounts, and nobody is owed a correction.
+    A group that never stood (was_live) is dropped too: nobody was told about
+    it, and its correction would be the only place its clears appeared.
     """
     records = [event for event in events if isinstance(event, dict)]
     live = set(witnesses(records))
+    clears = latest_clears(records)
+    reverted = reverted_at(records)
     # Every key in a witness map has a witness, and witnessing is symmetric,
     # so each group already holds at least two clears.
     return [
         group
         for group in pair_components(witnesses(records, ignore_retractions=True))
-        if not live.intersection(group)
+        if not live.intersection(group) and was_live(group, clears, reverted)
     ]
 
 

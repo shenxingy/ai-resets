@@ -211,8 +211,15 @@ _SUBJECTS = {
 # window name and account count instead — still fields, never free text.
 ORIGIN_ANNOUNCEMENT = "announcement"
 ORIGIN_PROBE = "probe"
-_PROBE_SUBJECT = "{product}: {window} limits reset on {accounts} — not announced yet"
-_PROBE_HEADLINE = "{product}: {window} limits reset on {accounts}, and nobody has announced it yet."
+# "Nobody has announced it" was more than we know: a probe-first incident
+# only means no TRUSTED post claimed it, and a reviewed staff member's post
+# that failed text verification can sit right beside the pair (review case
+# [15]). So the copy says what we could check, in the subject as well.
+_PROBE_SUBJECT = "{product}: {window} limits reset on {accounts} — no verified announcement yet"
+_PROBE_HEADLINE = (
+    "{product}: {window} limits reset on {accounts}, not yet announced by a source we "
+    "could verify."
+)
 _PROBE_STAGE_WORD = "Seen on our accounts"
 # The window names an exporter writes (quota_probe.WINDOW_NAMES). Anything
 # else reads as "usage" rather than being printed into a subject line.

@@ -7,11 +7,15 @@ personal limit reset redeemed on the web. Our probes can positively identify
 every OTHER own-cause (spent banked credit, account switch, plan change, the
 Claude Code reset menu opened on this machine). They call a reset the vendor's
 only when a second, independent witness agrees: another of our accounts
-clearing the same window within the hour, or a trusted vendor post saying the
-reset already happened, posted between one hour before and three hours after
-the clear. Every historical clear since 2026-08-30 lands on its true cause
-under this rule once the signals it needs are recorded (table below);
-historical rows lack them, so the live log keeps those rows `unresolved`.
+clearing the same primary weekly window within the hour, or a trusted vendor
+post saying the reset already happened, posted between one hour before and
+three hours after the clear. Once the signals the rule needs are recorded,
+every historical clear since 2026-08-30 but one lands on its true cause, and
+none lands on a wrong one (table below). The exception is the 2026-09-08
+vendor reset: the only post near it is a tracker's paraphrase that was never
+verified against the original, so the rule leaves that clear a private
+`unattributed` that confirms nothing. Historical rows lack those signals, so
+the live log keeps them `unresolved`.
 
 Written 2026-10-11 after the owner's decisions on the four open items in
 `docs/robustness-plan.md` "Owner decisions". The owner's words, verbatim:
@@ -61,21 +65,25 @@ schema (`codex app-server generate-json-schema`), and Claude Code's bundled
 The cause column was established on 2026-10-11 from the probe logs, Codex
 session rollouts of both Codex homes, `codex-login.log`, shell history, Claude
 profile histories and `.claude.json` backups. "Rule" is what the rule below
-assigns when the signals it needs are recorded.
+assigns when the signals it needs are recorded. `confirmed` means one
+account's `unattributed` clear confirms the trusted post beside it; the clear
+itself stays private. `tests/test_docs.py` re-derives every vendor row's Rule
+from the post beside it (`tests/fixtures/backtest-posts.json`), so this column
+cannot drift from the code.
 
 | When (UTC) | Account | Cause | Deciding evidence | Rule |
 |---|---|---|---|---|
-| 08-31 02:26 | Codex Pro | vendor | bank 1→1; staff post 3 min later | unattributed + post → confirmed |
+| 08-31 02:26 | Codex Pro | vendor | bank 1→1; staff post 3 min later | confirmed |
 | 09-02 04:10 | Codex Pro | own banked credit | bank 1→0 | self_applied |
 | 09-05 05:32 | Codex Pro | own banked credit | bank 2→1 | self_applied |
-| 09-08 01:22 | Codex Pro | vendor | bank 1→1; post 34 min later | confirmed |
+| 09-08 01:22 | Codex Pro | vendor | bank 1→1; a tracker's unverified paraphrase of a post 34 min later | unattributed (private: no trusted post) |
 | 09-12 08:09 | Codex Pro | vendor | bank 1→1; post in the same minute | confirmed |
 | 09-13 19:32 | Codex Pro | own banked credit | bank 1→0 | self_applied |
 | 09-19 03:44 | Codex | account switch | plan pro → prolite | account_change |
 | 09-20 19:47 | Codex | account switch | plan prolite → pro, `codex login` 14 s earlier | account_change |
 | 09-26 16:59 | Codex Pro | vendor | bank 1→1; post 79 min later | confirmed |
 | 09-30 18:18 | Claude b | own limit reset | `/rate-limit-options` 30 min earlier; account a did not clear | self_applied |
-| 10-02 21:13 | Codex Pro | vendor | bank 2→2; Pro Lite account also cleared | vendor_reset |
+| 10-02 21:13 | Codex Pro | vendor | bank 2→2; Pro Lite account also cleared; post 5 min later | vendor_reset |
 | 10-04 02:44 | Codex Pro | own banked credit | bank 2→1 ONE POLL BEFORE the clear | self_applied (needs the lookback) |
 | 10-05 00:46 | Codex Pro | own banked credit | bank 1→0 | self_applied |
 | 10-07 03:28 | Codex Pro | vendor | bank 0→0; post 6 min later | confirmed |
@@ -87,13 +95,15 @@ Historical rows carry no account fingerprint, so the probe itself cannot
 re-derive "unattributed" for them: they stay `unresolved` forever. The rule
 applies to clears recorded after this change ships.
 
-Replayed through the implementation on 2026-10-11, from copies of the live
-sample logs:
+Replayed through the implementation on 2026-10-11, and again after the
+review fixes the same evening, from copies of the live sample logs:
 
 - **As recorded.** The account switches (09-19, 09-20, Claude a 10-11) come
   out `account_change` and the own resets come out `self_applied`, including
   10-04 through the lookback and Claude b 09-30 through its history. Every
-  vendor row stays `unresolved`.
+  vendor row stays `unresolved`. The 2026-09-09 flap, when the vendor served
+  account a's pre-reset level on its pre-reset anchor between reads on the new
+  one, is no clear and no retraction.
 - **With a fingerprint per plan injected, and one reading per minute
   restored.** The sample log writes a row only when a value moves, so its
   brackets are wider than the live ones. All seven Codex vendor rows become
@@ -104,9 +114,16 @@ sample logs:
   Pro Lite account's own session rollouts, which place its clears only
   within hours (10-02 between 18:54 and 21:48 UTC; 10-11 between 02:09 and
   04:05 UTC). That a live probe would have paired them within 60 minutes is
-  an inference. On 10-11 the tracked post (04:01:09 UTC, "Put the reset in
-  the bag. All propagated.") also falls inside the single-account window, so
-  that clear would be `confirmed` either way.
+  an inference. A trusted post also falls inside the single-account window on
+  both days (10-02 21:18:48 UTC, "Reset all propagated. Enjoy."; 10-11
+  04:01:09 UTC, "Put the reset in the bag. All propagated."), so each clear
+  would be `confirmed` either way.
+- **Why 09-08 confirms nothing.** The only post near it is a tracker's row
+  whose text was never verified against the original post
+  (`text_verified: false`, `text_source: tracker`).
+  `incidents.is_trusted_announcement()` refuses it, and one account's clear
+  confirms only a trusted post. The clear stays a private `unattributed`, and
+  becomes `confirmed` only if a verified copy of that post is recorded.
 
 ## The rule
 
@@ -165,6 +182,13 @@ An `unattributed` clear becomes the VENDOR's in exactly two ways:
   The two clears must come from different probe labels as well as different
   fingerprints, and both must be confirmed and not retracted. Both become
   `vendor_reset` (public), and each names the other as its witness.
+  - **Only the primary weekly window pairs:** Codex's base limit
+    (`codex/10080`) and Claude's all-models window (`weekly_all`). A vendor
+    reset clears the per-model and secondary weekly windows too
+    (`weekly_scoped:<model>`, `codex_bengalfox`), often a poll later. Paired on
+    their own they made one reset two incidents and two mails, and a pair at
+    its limit on the primary window escaped the exception below through a
+    scoped window that was not. Those windows stay `unattributed`.
   - **Choosing the witness:** the nearest qualifying clear, with a tie going
     to the lower event id. Three or more accounts clearing together form one
     incident.
@@ -182,6 +206,11 @@ An `unattributed` clear becomes the VENDOR's in exactly two ways:
   what the probe checked.
   - The observation row itself stays private: a single account is shown only
     as the timing of a reset the vendor announced.
+  - **On the page:** both renderers draw one line under the post, built from
+    the annotation's labels, minutes and verdict and nothing else: "Seen on
+    our account 2 min before this post", or "Seen on two of our accounts …"
+    when a pair confirms it (`build.seen_line()`, and `seenLine()` in
+    `site/app.js`). No id, time of day or level reaches the markup.
   - A post with no label never takes a single account's word.
   - A Claude clear can be blocked here. If the other Claude account was
     readable and had not cleared (`accounts_disagree`), the clear confirms
@@ -203,9 +232,55 @@ A probe-first incident (no announcement) can only start from `vendor_reset`:
 - **Incident key:** `<vendor>:probe-<window>-<lower bracket of the earliest
   clear>`, for example `openai:probe-weekly-1791691072`.
 - **A post arriving later:** a trusted post that confirms the pair takes the
-  incident over and records it in `merged_from`.
-- **A retraction:** a pair that a retraction breaks becomes one `retracted`
-  row, so the people who were mailed get the correction.
+  incident over and records it in `merged_from`. Only a post whose own status
+  is `confirmed` can: a post that ends up historical, merely announced or
+  `reverted_on_our_account` leaves the pair its own incident.
+- **A withdrawn clear near a post** makes it `reverted_on_our_account` only if,
+  while it stood, it would have confirmed that post (a member of a pair that
+  stood counts as the pair), and only on a window that can pair. Standing
+  evidence that confirms the post wins over a withdrawal however near.
+- **A retraction:** a pair that stood and that a retraction then breaks
+  becomes one `retracted` row, so the people who were mailed get the
+  correction. A probe retracts a clear only when two consecutive reads show it
+  reverted (`REVERT_POLLS`), and any other read in between restarts the
+  count. On 2026-09-09 at 18:13:40 UTC the vendor served account a's
+  pre-reset level on its pre-reset anchor for exactly one read. What two
+  reads cannot absorb: the same thing at 16:56:40 has no row for 44 minutes
+  after it, because the sample log writes a row only when a value moves, so
+  it was one stale read and a blind gap or 44 stale reads in a row, and the
+  log cannot say which.
+  - **It must have stood:** every member confirmed, and each retracted
+    member's `reverted_at` strictly later than the last member's
+    `confirmed_at`. A clear taken back before its partner was confirmed never
+    made a pair, and produces no row at all.
+  - **It must have been mailable:** the earliest revert no sooner than the
+    120-minute hold after the later clear. A pair broken inside the hold was
+    never mailed, so nobody is owed a correction; and a pair can form and
+    break between two five-minute publishes, in which case its row would have
+    been the only public trace of the clear left standing. Such a pair
+    produces no row (the post it confirmed, if any, still reads
+    `reverted_on_our_account`).
+  - **Confirmation needs consecutive idle reads:** a revert read held for a
+    second opinion restarts the clear's `CONFIRM_POLLS` count, so idle,
+    revert, idle does not confirm it.
+  - **The row carries only** `incident_key`, the published id, `status:
+    retracted` and `verdict: null`. No clears, account labels or times:
+    `scripts/check_site.py` fails the publish if it carries anything else.
+    The correction mail is written from the notifier's own record and the raw
+    log, never from this row.
+  - **Its key** is the post's when a trusted post took the pair over, else
+    the probe key. The notifier never reads a retracted row as a rename, and
+    corrects under the incident it filed the pair row under: subscribers
+    when that is the probe-first incident, one owner alert when a post holds
+    it (the post's own `reverted_on_our_account` raises the same alert, not a
+    second one).
+  - **A first mail still waiting** (held by the flood cap, or failed and
+    waiting for its retry) is read against the feed again before it goes
+    out. It is cancelled when the feed marks the incident withdrawn or its
+    status no longer mails: the delivery stays `failed` with a `last_error`
+    starting `cancelled:` and the reason. A tick in which the incident is
+    missing from the feed only defers it, because an absence is not a
+    withdrawal.
 
 An `unattributed` clear with no witness never becomes public and never mails.
 Nothing alerts the owner for `observed_pending` or for an account change; both
@@ -240,11 +315,31 @@ On every clear event: `account`, `account_fp_before`, `account_fp_after`,
 `checks = {identity, plan, credit, bracket, local_trace}` with values
 `same/changed/unread`, `same/changed/unread`,
 `unspent/spent/unread/no_bank`, `tight/wide` and `none/found/unread/n_a`.
-Credit-grant events carry `account` too.
+Credit-grant events carry `account` too. A retraction is its clear's record
+plus `reverted_at`, `used_at_revert` and `resets_at_at_revert` (the first of
+the reads that showed the revert: when usage came back, the level and the
+anchor), `revert_confirmed_at` (the read that completed the count) and
+`revert_reads`. Until the count completes, the pending clear holds that first
+read as `revert_read`, and the probe logs `REVERT READ held`.
+
+A clear also carries `credit_itemised`: `true` only when both sides listed
+their credits (`credit_ids` a list, `[]` included). It sets how much any
+published sentence or email may say about the bank. Itemised, it may say no
+credit left the bank before its expiry. Otherwise only the count was read,
+so it says "the banked credit count read N then N" and no more: a grant and
+a redemption between two polls cancel in a count. The email follows the same
+rule for every clear it quotes (both, for a pair): "No banked credit was
+spent" only when all of them were itemised; else "the banked credit count
+was unchanged" when every count was read and equal; else "the banked credit
+count did not fall".
 
 Published rows carry neither fingerprints nor raw event ids. A row's id is
 `obs-<first 12 hex digits of sha256("ai-resets/observation:" + event id)>`,
 because a Claude model-scoped slot id can contain an unreleased model's name.
+For a model-scoped id the model slug is first replaced by `#<n>`, its rank
+among that account's scoped windows clearing at the same moment, sorted by
+slug: every other part of the id is on the public row, so a digest of the raw
+id let anyone confirm a guessed codename. Ids with no model are unchanged.
 Accounts appear as their labels.
 
 ## Second Codex account
@@ -316,6 +411,13 @@ marked.
     now.** The email's "what our account saw" line is checked before probe
     health. A clear already recorded therefore still confirms a post while
     the probe is blind.
+11. **Only each vendor's primary weekly window pairs.** The draft paired any
+    window family. See "Two accounts" above.
+12. **Settled after review; the draft did not address them.** A retraction
+    takes two consecutive reads. A withdrawn pair publishes only its key, id
+    and status, and only if it stood. The bank is described only as far as it
+    was read (`credit_itemised`). Published ids hide a model's name. The page
+    draws the seen line. Each is described where it applies above.
 
 ## Not in scope
 

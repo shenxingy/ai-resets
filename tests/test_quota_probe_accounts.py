@@ -45,8 +45,13 @@ ACCOUNT_A = "placeholder-account-a"
 ACCOUNT_B = "placeholder-account-b"
 
 
-def rpc(used, resets_at, *, account_id, plan="pro", credits=0):
-    """One `account/rateLimits/read` result for one weekly window."""
+def rpc(used, resets_at, *, account_id, plan="pro", credits=0, itemised=True):
+    """One `account/rateLimits/read` result for one weekly window.
+
+    `itemised=False` drops the credits list and keeps only availableCount,
+    as a response with no detail rows reads.
+    """
+    bank = {"availableCount": credits, "credits": []} if itemised else {"availableCount": credits}
     return {
         "accountId": account_id,
         "rateLimitsByLimitId": {
@@ -57,7 +62,7 @@ def rpc(used, resets_at, *, account_id, plan="pro", credits=0):
                 "planType": plan,
             },
         },
-        "rateLimitResetCredits": {"availableCount": credits, "credits": []},
+        "rateLimitResetCredits": bank,
     }
 
 
@@ -637,7 +642,7 @@ class CoverageTest(unittest.TestCase):
 # ─── Pairing and the published words ─────────────────────────────────────────
 
 
-def clears_on_both(t0=1_791_700_000, b_offset=10, used_a=80, used_b=60):
+def clears_on_both(t0=1_791_700_000, b_offset=10, used_a=80, used_b=60, itemised_a=True):
     """Both accounts' weekly windows clearing early, every own-cause excluded."""
     d = qp.Detector()
     events = []
@@ -646,7 +651,8 @@ def clears_on_both(t0=1_791_700_000, b_offset=10, used_a=80, used_b=60):
     ):
         for i, level in enumerate((used, 0, 0)):
             anchor = t0 + 3 * 86400 if i == 0 else start + 60 * i + WEEK_SECONDS
-            result = rpc(level, anchor, account_id=account_id, plan=plan)
+            result = rpc(level, anchor, account_id=account_id, plan=plan,
+                         itemised=itemised_a or account != "a")
             for row in qp.normalise(result, start + 60 * i, account):
                 events.extend(d.observe(row))
     return events
@@ -664,6 +670,61 @@ class PairingTest(unittest.TestCase):
         self.assertEqual(by_account["a"]["witness"], by_account["b"]["event_id"])
         self.assertEqual(by_account["b"]["witness"], by_account["a"]["event_id"])
         self.assertTrue(by_account["b"]["event_id"].startswith("b:codex/10080:"))
+
+    def test_one_stale_read_on_a_does_not_break_the_pair(self):
+        # The 2026-10-11 backtest: a paired reset, then one read of a's
+        # pre-reset level on its pre-reset anchor (the 2026-09-09 replica
+        # shape) while a still idles. One read used to retract a's clear, and
+        # withdrawn_pairs() then mailed a correction for a reset that stood.
+        from scripts import attribution
+        t0, old_anchor = 1_791_700_000, 1_791_700_000 + 3 * 86400
+        d = qp.Detector()
+        events = []
+
+        def read(account, account_id, plan, t, used, anchor):
+            result = rpc(used, anchor, account_id=account_id, plan=plan)
+            for row in qp.normalise(result, t, account):
+                events.extend(d.observe(row))
+
+        for account, account_id, start, plan in (
+            ("a", ACCOUNT_A, t0, "pro"), ("b", ACCOUNT_B, t0 + 10, "prolite"),
+        ):
+            for i, level in enumerate((80, 0, 2)):
+                anchor = old_anchor if i == 0 else start + 60 * i + WEEK_SECONDS
+                read(account, account_id, plan, start + 60 * i, level, anchor)
+        stale_at = t0 + 60 * 200
+        read("a", ACCOUNT_A, "pro", stale_at, 80, old_anchor)
+        read("a", ACCOUNT_A, "pro", stale_at + 60, 2, stale_at + 60 + WEEK_SECONDS)
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_CLEAR] * 2)
+        self.assertEqual(attribution.withdrawn_pairs(events), [])
+        rows = export({"codex": block("codex"), "codex:b": block("codex:b")},
+                      events=events)["observations"]
+        self.assertEqual({row["verdict"] for row in rows}, {"vendor_reset"})
+        self.assertTrue(all(row["public"] for row in rows))
+        # A revert that HOLDS is still the clear un-happening: it breaks the pair.
+        read("a", ACCOUNT_A, "pro", stale_at + 120, 80, old_anchor)
+        read("a", ACCOUNT_A, "pro", stale_at + 180, 80, old_anchor)
+        self.assertEqual(events[-1]["kind"], qp.EVENT_RETRACTION)
+        self.assertEqual(len(attribution.withdrawn_pairs(events)), 1)
+
+    def test_a_count_only_bank_says_only_what_the_count_read(self):
+        # The 2026-10-11 privacy review: account a's response carried
+        # availableCount and no credits[], and its public row said "with no
+        # credit leaving the bank", which an unchanged count cannot show.
+        events = clears_on_both(itemised_a=False)
+        self.assertEqual([e["classification"] for e in events], ["unattributed"] * 2)
+        self.assertEqual([e["credit_itemised"] for e in events], [False, True])
+        rows = export({"codex": block("codex"), "codex:b": block("codex:b")},
+                      events=events)["observations"]
+        by_account = {row["account"]: row for row in rows}
+        self.assertEqual({row["verdict"] for row in rows}, {"vendor_reset"})
+        self.assertIn("and the banked credit count read 0 then 0. ", by_account["a"]["evidence"])
+        self.assertNotIn("no credit leaving", by_account["a"]["evidence"])
+        # b listed its (empty) bank on both sides, so it keeps the claim.
+        self.assertIn(
+            "read 0 then 0 with no credit leaving the bank before its expiry.",
+            by_account["b"]["evidence"],
+        )
 
     def test_account_a_alone_stays_private(self):
         events = [e for e in clears_on_both() if e["account"] == "a"]

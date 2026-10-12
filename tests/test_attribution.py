@@ -43,6 +43,8 @@ def clear(label="a", fp=FP_A, hi=T0, **edit):
         "plan_after": "pro",
         "classification": at.CLASS_UNATTRIBUTED,
         "confirmed": True,
+        # Two idle reads after the clear, as the detector confirms it.
+        "confirmed_at": hi + 120,
     }
     event.update(edit)
     return event
@@ -68,6 +70,19 @@ class VocabularyTests(unittest.TestCase):
     def test_the_rules_numbers_are_the_contracts(self):
         self.assertEqual(at.PAIR_WINDOW_SECONDS, 3600)
         self.assertEqual(at.AT_LIMIT_PERCENT, 95.0)
+
+    def test_the_pairing_families_are_spelled_as_the_probes_spell_them(self):
+        # Each vendor's primary weekly window, exactly as its probe names it.
+        # A rename on the probe side would otherwise stop every pair forming.
+        for account, limit_id in (("a", "codex"), ("b", "b:codex")):
+            with self.subTest(account=account):
+                self.assertIn(
+                    qp.window_family({"limit_id": limit_id, "account": account,
+                                      "window_minutes": 10080}),
+                    at.PAIRING_FAMILIES,
+                )
+        self.assertIn(cp.window_key({"limit_kind": "weekly_all"}), at.PAIRING_FAMILIES)
+        self.assertEqual(len(at.PAIRING_FAMILIES), 2)
 
 
 class PairTests(unittest.TestCase):
@@ -104,6 +119,26 @@ class PairTests(unittest.TestCase):
         weekly = clear("a", FP_A, T0)
         other = clear("b", FP_B, T0 + 60, window_family="codex/300")
         self.assertEqual(upgraded([weekly, other]), {})
+
+    def test_only_the_primary_weekly_window_pairs(self):
+        # One vendor reset clears every window it touches, the per-model and
+        # secondary ones often a poll after the primary. Each of those pairing
+        # on its own made one reset two incidents; judged on the primary
+        # window alone it is one.
+        for family in ("weekly_scoped:opus", "codex_bengalfox/10080", "codex/300", "session"):
+            with self.subTest(family=family):
+                events = [clear("a", FP_A, T0, window_family=family),
+                          clear("b", FP_B, T0 + 60, window_family=family)]
+                self.assertEqual(upgraded(events), {})
+                self.assertEqual(at.withdrawn_pairs(
+                    events + [{"kind": "retraction", "event_id": events[1]["event_id"]}]), [])
+        for family in sorted(at.PAIRING_FAMILIES):
+            with self.subTest(family=family):
+                events = [clear("a", FP_A, T0, window_family=family),
+                          clear("b", FP_B, T0 + 60, window_family=family)]
+                self.assertEqual(len(upgraded(events)), 2)
+        # A malformed family is "not one of them", never a crash.
+        self.assertFalse(at.is_candidate(clear(window_family=["codex/10080"]), set()))
 
     def test_the_hour_is_inclusive_and_a_second_more_is_not(self):
         for gap, paired in ((at.PAIR_WINDOW_SECONDS, True), (at.PAIR_WINDOW_SECONDS + 1, False)):
@@ -233,7 +268,7 @@ class GroupTests(unittest.TestCase):
 
     def test_a_broken_pair_is_withdrawn_and_a_standing_one_is_not(self):
         a, b = clear("a", FP_A, T0), clear("b", FP_B, T0 + 60)
-        withdrawn = {"kind": "retraction", "event_id": b["event_id"]}
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"], "reverted_at": T0 + 9000}
         self.assertEqual(at.withdrawn_pairs([a, b]), [])
         self.assertEqual(at.withdrawn_pairs([a, b, withdrawn]),
                          [tuple(sorted((a["event_id"], b["event_id"])))])
@@ -241,7 +276,48 @@ class GroupTests(unittest.TestCase):
         c = clear("c", "cccccccccccc", T0 + 120)
         self.assertEqual(at.withdrawn_pairs([a, b, c, withdrawn]), [])
         # A lone retracted clear was never a pair.
-        self.assertEqual(at.withdrawn_pairs([a, {"kind": "retraction", "event_id": a["event_id"]}]), [])
+        self.assertEqual(at.withdrawn_pairs(
+            [a, {"kind": "retraction", "event_id": a["event_id"], "reverted_at": T0 + 9000}]), [])
+
+    def test_a_clear_withdrawn_before_its_partner_existed_was_never_a_pair(self):
+        # Privacy review, RetractedBeforeWitness: account a cleared and was
+        # taken back five minutes later; account b cleared 30 minutes after
+        # that. Grouped with retractions ignored they join, and the old
+        # correction row then published b's lone clear. Only a group that
+        # stood as a pair before the retraction is withdrawn.
+        a, b = clear("a", FP_A, T0 + 60), clear("b", FP_B, T0 + 1800)
+        def withdrawn(at_):
+            return {"kind": "retraction", "event_id": a["event_id"], "reverted_at": at_}
+        live_from = b["confirmed_at"]
+        for reverted, stood in (
+            (T0 + 300, False),          # before b even cleared
+            (live_from, False),         # the same second b was confirmed: never both
+            (live_from + 1, True),      # one second as a pair is a pair
+            (None, False),              # an unreadable time shows no order
+            ("soon", False),
+        ):
+            with self.subTest(reverted=reverted):
+                self.assertEqual(bool(at.withdrawn_pairs([a, b, withdrawn(reverted)])), stood)
+
+    def test_every_member_s_confirmation_must_be_on_record(self):
+        a, b = clear("a", FP_A, T0), clear("b", FP_B, T0 + 60)
+        retraction = {"kind": "retraction", "event_id": b["event_id"], "reverted_at": T0 + 9000}
+        for edit in ({"confirmed_at": None}, {"confirmed_at": "late"}, {"confirmed_at": True}):
+            with self.subTest(edit=edit):
+                self.assertEqual(at.withdrawn_pairs([dict(a, **edit), b, retraction]), [])
+
+    def test_the_earliest_revert_on_record_is_the_one_judged(self):
+        a, b = clear("a", FP_A, T0), clear("b", FP_B, T0 + 1800)
+        late = {"kind": "retraction", "event_id": a["event_id"], "reverted_at": T0 + 9000}
+        early = dict(late, reverted_at=T0 + 300)
+        unread = dict(late, reverted_at=None)
+        self.assertTrue(at.withdrawn_pairs([a, b, late]))
+        for records in ([a, b, late, early], [a, b, early, late], [a, b, late, unread],
+                        [a, b, unread, late]):
+            with self.subTest(order=[r.get("reverted_at") for r in records[2:]]):
+                self.assertEqual(at.withdrawn_pairs(records), [])
+        self.assertEqual(at.reverted_at([late, {"kind": "retraction"}, "junk", a]),
+                         {a["event_id"]: T0 + 9000})
 
 
 class StampTests(unittest.TestCase):
@@ -383,6 +459,50 @@ class DetectorPairTests(unittest.TestCase):
         session = [cp.observation(e, set()) for e in at.attribute(events)
                    if e.get("limit_kind") == "session" and e.get("kind") == "clear"]
         self.assertTrue(all(r["verdict"] is None and not r["public"] for r in session))
+
+    def claude_both_weekly_windows(self, weekly, scoped):
+        """Both profiles' weekly_all AND model-scoped windows, cleared on one poll."""
+        anchor = T0 + 3 * DAY
+        with tempfile.TemporaryDirectory() as tmp:
+            histories = {label: Path(tmp) / f"history-{label}.jsonl" for label in ("a", "b")}
+            for path in histories.values():
+                history_file(path, [("/model", T0 - 100)])
+            env = {f"AI_RESETS_CLAUDE_HISTORY_{label.upper()}": str(path)
+                   for label, path in histories.items()}
+            with mock.patch.dict(os.environ, env):
+                detector, state, events = qp.Detector(), {}, []
+                for i in range(3):
+                    for label, fp in (("a", FP_A), ("b", FP_B)):
+                        rows = cp.normalise_usage(
+                            usage_payload(weekly=weekly[label] if i == 0 else 0,
+                                          scoped=scoped[label] if i == 0 else 0,
+                                          weekly_resets=anchor),
+                            label, T0 + 300 * i, plan_type="max", account_fp=fp,
+                        )
+                        events += cp.observe_rows(detector, rows, state)
+        return [e for e in at.attribute(events)
+                if e.get("kind") == "clear" and e.get("window_minutes") == 10080]
+
+    def test_a_model_scoped_window_never_pairs(self):
+        clears = self.claude_both_weekly_windows({"a": 48, "b": 60}, {"a": 55, "b": 40})
+        by_kind = {}
+        for event in clears:
+            by_kind.setdefault(event["limit_kind"], []).append(event)
+        self.assertEqual(len(by_kind["weekly_scoped"]), 2)
+        self.assertEqual([at.is_vendor_reset(e) for e in by_kind["weekly_all"]], [True, True])
+        for event in by_kind["weekly_scoped"]:
+            self.assertEqual(event["classification"], qp.CLASS_UNATTRIBUTED)
+            self.assertFalse(at.is_vendor_reset(event))
+            self.assertFalse(cp.observation(event, set())["public"])
+
+    def test_a_pair_at_its_limit_cannot_pair_through_a_scoped_window_instead(self):
+        # Review case [12]: weekly_all at 100% and 97% (an owner short of
+        # quota resetting both), the per-model windows at 19% and 38%. The
+        # scoped windows used to pair and publish "Vendor reset · two accounts".
+        clears = self.claude_both_weekly_windows({"a": 100, "b": 97}, {"a": 19, "b": 38})
+        self.assertEqual({e["limit_kind"] for e in clears}, {"weekly_all", "weekly_scoped"})
+        self.assertFalse(any(at.is_vendor_reset(e) for e in clears))
+        self.assertFalse(any(cp.observation(e, set())["public"] for e in clears))
 
 
 if __name__ == "__main__":

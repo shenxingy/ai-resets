@@ -683,10 +683,31 @@ class DetectionTests(unittest.TestCase):
         self.feed(usage_payload(weekly=48, weekly_resets=anchor), "a", T0)
         self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 300)
         self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 600)
+        # The snap-back has to be read twice in a row (qp.REVERT_POLLS): one
+        # stale replica read must not withdraw a real reset.
+        held = self.feed(usage_payload(weekly=47, weekly_resets=anchor), "a", T0 + 900)
+        self.assertEqual(self.weekly_events(held), [])
         events = self.weekly_events(
-            self.feed(usage_payload(weekly=47, weekly_resets=anchor), "a", T0 + 900)
+            self.feed(usage_payload(weekly=47, weekly_resets=anchor), "a", T0 + 1200)
         )
         self.assertEqual(events[0]["kind"], qp.EVENT_RETRACTION)
+        self.assertEqual(events[0]["reverted_at"], T0 + 900)
+
+    def test_one_snap_back_read_between_idle_reads_withdraws_nothing(self):
+        anchor = T0 + 3 * DAY
+        self.feed(usage_payload(weekly=48, weekly_resets=anchor), "a", T0)
+        self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 300)
+        self.feed(usage_payload(weekly=0, weekly_resets=anchor), "a", T0 + 600)
+        events = []
+        for i, weekly in enumerate((47, 0, 47, 0)):
+            events += self.weekly_events(
+                self.feed(usage_payload(weekly=weekly, weekly_resets=anchor), "a", T0 + 900 + 300 * i)
+            )
+        self.assertEqual(events, [])
+        # Still the one clear, under the id it was confirmed with.
+        pending = self.detector.slots["claude:a:weekly_all/10080"]["pending"]
+        self.assertEqual(pending["event_id"], f"claude:a:weekly_all/10080:{T0 + 300}")
+        self.assertTrue(pending["confirmed"])
 
     def test_a_five_hour_clear_can_never_be_vendor_evidence(self):
         anchor = T0 + 4 * 3600
@@ -986,6 +1007,28 @@ class LocalTraceTests(StateDirTest):
             self.feed(0, T0 + 900, session=0)
             self.feed(0, T0 + 1200, session=0)
         self.assertEqual(read.call_count, 1)
+
+    def test_an_anchor_jump_clear_names_its_blind_gap_not_a_wide_bracket(self):
+        # Recovered across a 600 s gap: inside the 900 s three-poll bracket by
+        # width, but recovered, so the bracket check fails all the same. The
+        # reason is re-written here after the history is read, and it has to
+        # say why; "bracketed by more than three polls" of 600 s is false.
+        history_file(self.history["a"], [])
+        events = []
+        for weekly, t, resets in ((48, T0, self.ANCHOR), (20, T0 + 600, self.ANCHOR + 7 * DAY)):
+            rows = cp.normalise_usage(
+                usage_payload(weekly=weekly, weekly_resets=resets), "a", t,
+                plan_type="max", account_fp=FP,
+            )
+            events += cp.observe_rows(self.detector, rows, self.claude_state)
+        (event,) = [e for e in events if e.get("limit_kind") == "weekly_all"]
+        self.assertEqual(event["confirmed_by"], "anchor_jump")
+        self.assertEqual(event["clear_bracket_hi"] - event["clear_bracket_lo"], 600)
+        self.assertEqual(event["checks"]["bracket"], "wide")
+        self.assertEqual(event["checks"]["local_trace"], "none")
+        self.assertEqual(event["classification"], qp.CLASS_GLOBAL)
+        self.assertIn("recovered across a 600s blind gap (anchor_jump)", event["reason"])
+        self.assertNotIn("more than three polls", event["reason"])
 
     def test_a_check_that_could_not_run_is_named_alongside_the_trace(self):
         history_file(self.history["a"], [])
@@ -1416,6 +1459,36 @@ class CycleTests(StateDirTest):
 
 
 # ─── The loop, and what it hands to systemd ──────────────────────────────────
+
+
+class RetractedPublicityTests(StateDirTest):
+    """A clear we have withdrawn is never published (cp.is_public, gate 3)."""
+
+    def test_a_retracted_weekly_natural_expiry_is_withheld(self):
+        # Only a natural expiry or a paired clear gets as far as the
+        # retraction check; every case on file was private before it, so the
+        # check could be dropped with the suite green.
+        clear = {
+            "event_id": "claude:a:weekly_all/10080:1788700300", "kind": qp.EVENT_CLEAR,
+            "slot": "claude:a:weekly_all/10080", "limit_id": "claude:a:weekly_all",
+            "limit_kind": "weekly_all", "window_minutes": WEEK_MINUTES, "account": "a",
+            "detected_at": T0 + 300, "clear_bracket_lo": T0, "clear_bracket_hi": T0 + 300,
+            "used_before": 48.0, "used_after": 0.0, "early_by_seconds": -60,
+            "prior_active_resets_at": T0 + 240, "classification": qp.CLASS_NATURAL,
+            "confirmed": True,
+        }
+        withdrawn = {**clear, "kind": qp.EVENT_RETRACTION, "confirmed": False,
+                     "reverted_at": T0 + 900, "used_at_revert": 48.0}
+        out = self.state / "anthropic.json"
+        for events, public in (([clear], True), ([clear, withdrawn], False)):
+            with self.subTest(retracted=len(events) > 1):
+                cp.EVENTS_FILE.write_text(
+                    "".join(json.dumps(e) + "\n" for e in events), encoding="utf-8"
+                )
+                cp.export_observations(out, now=T0 + 1200)
+                rows = json.loads(out.read_text())["observations"]
+                (row,) = [r for r in rows if r.get("kind") == qp.EVENT_CLEAR]
+                self.assertEqual(row["public"], public)
 
 
 class RunLoopTests(StateDirTest):

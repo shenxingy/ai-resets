@@ -45,6 +45,7 @@ from scripts.subscriptions import (
     plan_adoptions,
     plan_discovery,
     run_notifier,
+    unsendable_reason,
     run_unit_alert,
     safe_http_url,
 )
@@ -544,6 +545,31 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertFalse(plan.flooded)
         self.assertEqual(len(self.store.pending_deliveries()), FLOOD_CAP * 2)
 
+    def test_the_cap_counts_incidents_not_the_rows_that_carry_them(self):
+        # Review case [16]: three resets in one refresh, one of them on two
+        # status rows, was read as four and held. One incident is one mail
+        # per subscriber however many rows carry it.
+        self.baseline()
+        shared = "anthropic:probe-weekly-100"
+        batch = [
+            event("openai:1", "openai"),
+            event("openai:2", "openai"),
+            event("anthropic:obs-a", "anthropic", status="observed", incident_key=shared),
+            event("anthropic:obs-b", "anthropic", status="observed", incident_key=shared),
+        ]
+        plan = self.store.discover_events(batch, now=NOW)
+        self.assertEqual(len(plan.mailable), FLOOD_CAP + 1)
+        self.assertFalse(plan.flooded)
+        self.assertEqual(self.store.held_deliveries(), [])
+        self.assertEqual(len({row["incident_key"] for row in self.store.pending_deliveries()}),
+                         FLOOD_CAP)
+        # One more incident is over the cap, and the whole batch is held.
+        plan = self.store.discover_events(
+            [event(f"openai:{index}", "openai") for index in range(10, 10 + FLOOD_CAP + 1)],
+            now=NOW,
+        )
+        self.assertTrue(plan.flooded)
+
     def test_release_moves_held_deliveries_into_the_queue_once(self):
         self.baseline()
         self.store.discover_events(
@@ -554,6 +580,26 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(moved, (FLOOD_CAP + 1) * 2)
         self.assertEqual(len(self.store.pending_deliveries()), (FLOOD_CAP + 1) * 2)
         self.assertEqual(self.store.release_held(now=NOW), 0)
+
+    def test_a_cancelled_delivery_says_why_and_is_never_picked_again(self):
+        self.baseline()
+        self.store.discover_events([event("openai:probe-9", "openai")], now=NOW)
+        (first, second) = self.store.pending_deliveries()
+        self.assertTrue(self.store.cancel_delivery(
+            first["incident_key"], first["email"], "the pair was withdrawn", now=NOW))
+        self.assertEqual([row["email"] for row in self.store.pending_deliveries()],
+                         [second["email"]])
+        # A delivery already sent is the record of a mail a person received.
+        self.store.mark_sent(second["incident_key"], second["email"], "message-1")
+        self.assertFalse(self.store.cancel_delivery(
+            second["incident_key"], second["email"], "too late", now=NOW))
+        with self.store.connect() as conn:
+            rows = {row["email"]: (row["status"], row["last_error"], row["attempts"])
+                    for row in conn.execute("SELECT * FROM deliveries")}
+        self.assertEqual(rows[first["email"]],
+                         ("failed", "cancelled: the pair was withdrawn", 0))
+        self.assertEqual(rows[second["email"]], ("sent", None, 1))
+        self.assertEqual(self.store.pending_deliveries(), [])
 
     # ─── An incident that improves ───────────────────────────────────────────
 
@@ -644,6 +690,29 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("would send to 2", output)
         self.assertIn("banked reset announced — not yet landed", output)
         self.assertIn("Not landed on our Pro account", output)
+
+    def test_the_preview_counts_a_mail_already_sent_under_the_key_it_will_adopt(self):
+        # Review case [03]: a probe-first incident was mailed, and a post now
+        # takes it over. The real run renames first and sends nothing; the
+        # preview counted before the rename and said "would send to 2".
+        self.baseline()
+        probe_key = "openai:probe-weekly-100"
+        observed = {"event_key": "openai:obs-1", "vendor": "openai", "event_id": "obs-1",
+                    "origin": "probe", "status": "observed", "incident_key": probe_key,
+                    "observed_at": iso(NOW - 900)}
+        self.store.discover_events([observed], now=NOW)
+        for row in self.store.pending_deliveries():
+            self.store.mark_sent(row["incident_key"], row["email"], "message")
+        post = event("openai:2109", "openai", status="confirmed", merged_from=probe_key)
+        quiet = {**observed, "incident_key": "openai:2109"}
+        quiet.pop("status")
+        plan, queued = self.store.preview_events([post, quiet], now=NOW)
+        self.assertEqual(plan.adoptions, ((probe_key, "openai:2109"),))
+        self.assertEqual(len(plan.mailable), 1)
+        self.assertEqual(queued, [])
+        # And the run it previews agrees.
+        self.store.discover_events([post, quiet], now=NOW)
+        self.assertEqual(self.store.pending_deliveries(), [])
 
     # ─── Owner alerts ────────────────────────────────────────────────────────
 
@@ -1142,6 +1211,50 @@ class IncidentKeyTests(unittest.TestCase):
         )
         # A key we have never filed anything under is not a rename.
         self.assertEqual(plan_adoptions(stated, {}, set()), ())
+
+    def test_a_probe_first_mail_is_read_against_this_tick_s_feed_before_it_goes(self):
+        # Review case [11]: what decides whether a queued first mail of OUR
+        # OWN claim may still go out. Only a positive withdrawal or a status
+        # that no longer mails cancels it; an absence only defers it.
+        probe = {"origin": "probe", "observed_at": iso(NOW)}
+        post = {"announced_at": iso(NOW), "id": "1"}
+        observed = {"origin": "probe", "status": "observed"}
+        key = "openai:probe-weekly-1"
+        cases = {
+            "still observed": ({key: [observed, {"origin": "probe"}]}, None),
+            "withdrawn": ({key: [{"status": "retracted"}]}, "withdrawn"),
+            "withdrawn beside a stale row": ({key: [observed, {"status": "retracted"}]},
+                                             "withdrawn"),
+            "no longer mails": ({key: [{"origin": "probe", "status": "observed_single"}]},
+                                "observed_single"),
+            "rows without a status": ({key: [{"origin": "probe"}]}, "status none"),
+            "absent this tick": ({}, ""),
+        }
+        for name, (feed, expected) in cases.items():
+            with self.subTest(case=name):
+                reason = unsendable_reason(STAGE_NEW, key, probe, feed)
+                if expected in (None, ""):
+                    self.assertEqual(reason, expected)
+                else:
+                    self.assertIn(expected, reason)
+        # A follow-up, or the vendor's own announcement, is never ours to stop.
+        withdrawn = {key: [{"status": "retracted"}]}
+        self.assertIsNone(unsendable_reason(STAGE_RETRACTED, key, probe, withdrawn))
+        self.assertIsNone(unsendable_reason(STAGE_NEW, key, post, withdrawn))
+
+    def test_a_correction_never_moves_an_incident(self):
+        # Review case [09]: a withdrawn row reuses the event key of the pair
+        # row it withdraws. Read as a rename, it filed the post's incident
+        # back under the probe key, and the post's own row filed it forward
+        # again, on every tick.
+        stored = {"openai:obs-1": "openai:post", "openai:post": "openai:post"}
+        known = {"openai:post", "openai:probe-weekly-100"}
+        for status in ("retracted", " Retracted "):
+            with self.subTest(status=status):
+                withdrawn = [{"event_key": "openai:obs-1", "vendor": "openai", "status": status,
+                              "incident_key": "openai:probe-weekly-100",
+                              "merged_from": "openai:post"}]
+                self.assertEqual(plan_adoptions(withdrawn, stored, known), ())
 
     def test_only_new_is_mandatory_in_the_stages_preference(self):
         self.assertEqual(normalize_stages("new,confirmed"), (STAGE_NEW, STAGE_CONFIRMED))

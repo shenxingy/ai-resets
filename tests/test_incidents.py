@@ -826,16 +826,22 @@ class ProbeFirstCopyTests(unittest.TestCase):
     }
 
     def test_the_subject_says_two_of_our_accounts_and_not_yet_announced(self):
+        # Review case [15]: no TRUSTED post claimed the pair, which is not
+        # "nobody announced it": a staff post that failed text verification
+        # can sit right beside it. The copy says what we could check.
         reading = describe_event(self.ROW)
         self.assertEqual(
             reading["subject"],
-            "Claude Code: weekly limits reset on two of our accounts — not announced yet",
+            "Claude Code: weekly limits reset on two of our accounts — no verified "
+            "announcement yet",
         )
         self.assertEqual(
             reading["headline"],
-            "Claude Code: weekly limits reset on two of our accounts, and nobody has "
-            "announced it yet.",
+            "Claude Code: weekly limits reset on two of our accounts, not yet announced "
+            "by a source we could verify.",
         )
+        for said in (reading["subject"], reading["headline"]):
+            self.assertNotIn("nobody", said)
         self.assertEqual(
             reading["eyebrow"], "Anthropic / Claude Code · Reset · Seen on our accounts"
         )
@@ -849,7 +855,8 @@ class ProbeFirstCopyTests(unittest.TestCase):
         hostile = dict(self.ROW, window="<b>weekly</b>", accounts=["a", "a", None, 3])
         reading = describe_event(hostile)
         self.assertEqual(
-            reading["subject"], "Claude Code: usage limits reset on our account — not announced yet"
+            reading["subject"],
+            "Claude Code: usage limits reset on our account — no verified announcement yet",
         )
         three = describe_event(dict(self.ROW, accounts=["a", "b", "c"], window="5-hour"))
         self.assertIn("5-hour limits reset on three of our accounts", three["subject"])

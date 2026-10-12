@@ -144,16 +144,53 @@ NO_ANNOUNCEMENTS_HTML = (
 )
 
 
-def published_id(raw_id):
-    """`obs-<12 hex>`: a stable public name for one exported record.
+# A Claude model-scoped event id: `claude:<account>:weekly_scoped:<model
+# slug>/<minutes>:<epoch>`, the slot key claude_probe writes plus the moment.
+SCOPED_EVENT_ID = re.compile(
+    r"^(?P<head>claude:[^:/]+:weekly_scoped):(?P<slug>[^/]+)/(?P<tail>[^/]+)$"
+)
+
+
+def _digest(text):
+    return f"obs-{hashlib.sha256(f'ai-resets/observation:{text}'.encode()).hexdigest()[:12]}"
+
+
+def published_ids(raw_ids):
+    """raw event id -> `obs-<12 hex>`, a stable public name for each record.
 
     The raw event id carries the probe's slot key, and a Claude model-scoped
     slot key carries a slug of the model's display name, which on 2026-09-06
     was an unreleased codename. The feed needs a stable id per row (it is the
     notifier's event key) and nothing more, so it gets a digest.
+
+    A digest of the raw id was not enough: every other part of it (account,
+    window shape, time) is on the public row, so anyone could hash a guessed
+    codename and compare (privacy review). A scoped id is digested with its
+    slug replaced by an ordinal among that account's scoped windows clearing
+    at the same moment, sorted by slug, so the digest holds no model name.
+    Every id without a model digests exactly as it always has, so no event
+    key production has filed moves.
     """
-    digest = hashlib.sha256(f"ai-resets/observation:{raw_id}".encode()).hexdigest()
-    return f"obs-{digest[:12]}"
+    raw_ids = [raw for raw in raw_ids if isinstance(raw, str)]
+    slugs = {}
+    for raw in raw_ids:
+        match = SCOPED_EVENT_ID.match(raw)
+        if match:
+            slugs.setdefault((match["head"], match["tail"]), set()).add(match["slug"])
+    out = {}
+    for raw in raw_ids:
+        match = SCOPED_EVENT_ID.match(raw)
+        if match is None:
+            out[raw] = _digest(raw)
+            continue
+        ordinal = sorted(slugs[(match["head"], match["tail"])]).index(match["slug"])
+        out[raw] = _digest(f"{match['head']}:#{ordinal}/{match['tail']}")
+    return out
+
+
+def published_id(raw_id):
+    """One record's public id, on its own (published_ids, alone in its set)."""
+    return published_ids([raw_id])[raw_id]
 
 
 def witnessed(item, vendor_rows):
@@ -200,6 +237,12 @@ def public_observations(raw):
         and item.get("verdict") == VERDICT_VENDOR_RESET
         and isinstance(item.get("event_id"), str)
     }
+    # Ordinals are counted over the whole export, private rows included, so
+    # a row's public id does not depend on which of its neighbours is public.
+    public_ids = published_ids(
+        [item.get("event_id") for item in raw if isinstance(item, dict)]
+        + [item.get("witness") for item in raw if isinstance(item, dict)]
+    )
     rows = []
     for item in raw:
         if not isinstance(item, dict) or item.get("public") is not True:
@@ -221,8 +264,8 @@ def public_observations(raw):
             # and which of our accounts it was. Labels only, never a
             # fingerprint. Other verdicts gain none of this, so the event keys
             # production already filed for them do not move.
-            row["event_id"] = published_id(item["event_id"])
-            row["witness"] = published_id(item["witness"])
+            row["event_id"] = public_ids[item["event_id"]]
+            row["witness"] = public_ids[item["witness"]]
             row["account"] = item.get("account")
         rows.append(row)
     # ISO-8601 Z strings sort lexicographically in chronological order, so this
@@ -470,6 +513,58 @@ def recent_events(vendors, generated, days=30):
 
 EMPTY_EVENTS_MARKER = "no-recent-events"
 
+# How many of our accounts a confirmation names, in words; the email and the
+# probe-first subject count the same way (incidents.probe_accounts_phrase).
+SEEN_COUNT_WORDS = {2: "two", 3: "three", 4: "four"}
+
+
+def seen_span(minutes):
+    """`2 min`, `1 h`, `3 h 5 min`: a whole number of minutes, unsigned."""
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"{hours} h {rest} min" if rest else f"{hours} h"
+
+
+def seen_line(event):
+    """`Seen on our account 2 min before this post`, or "".
+
+    What the methodology promises a confirmed announcement shows: that our
+    own account saw it, and when, relative to the post. Built only from the
+    annotation's labels, minutes and verdict (annotate_announcements), never
+    an id, a time of day or a level: one account's clear stays private
+    except as the timing of a reset the vendor announced. A `vendor_reset`
+    names how many accounts, an `unattributed` clear says "our account", and
+    anything else, or an annotation that is not `confirmed`, draws nothing.
+    The interactive twin is seenLine() in site/app.js; tests/test_build.py
+    runs both on the same cases.
+    """
+    observed = event.get("observed") if isinstance(event, dict) else None
+    if not isinstance(observed, dict) or observed.get("status") != OBSERVED_CONFIRMED:
+        return ""
+    minutes = observed.get("lead_minutes")
+    if isinstance(minutes, float) and minutes.is_integer():
+        # JSON has one number type: app.js reads 2.0 as the integer 2.
+        minutes = int(minutes)
+    if isinstance(minutes, bool) or not isinstance(minutes, int):
+        return ""
+    labels = observed.get("accounts")
+    count = len({label for label in labels if isinstance(label, str) and label}) if isinstance(labels, list) else 0
+    verdict = observed.get("verdict")
+    if verdict == VERDICT_VENDOR_RESET and count >= 2:
+        who = f"{SEEN_COUNT_WORDS.get(count, str(count))} of our accounts"
+    elif verdict == incidents.VERDICT_UNATTRIBUTED and count >= 1:
+        who = "our account"
+    else:
+        return ""
+    if minutes == 0:
+        when = "within a minute of this post"
+    elif minutes > 0:
+        when = f"{seen_span(minutes)} before this post"
+    else:
+        when = f"{seen_span(-minutes)} after this post"
+    return f"Seen on {who} {when}"
+
 
 def build_event_rows(rows, limit=8):
     if not rows:
@@ -487,10 +582,12 @@ def build_event_rows(rows, limit=8):
     for _occurred, key, event in rows[:limit]:
         company, _product = VENDOR_META[key]
         confidence = "approximate" if event.get("confidence") == "approx" else "observed"
+        seen = seen_line(event)
+        seen_html = f'<p class="event-seen">{html.escape(seen)}</p>' if seen else ""
         output.append(
             f'''<article class="event-item" style="--vendor-color:var(--v-{key})">
   <div class="event-meta"><time datetime="{html.escape(event["announced_at"], quote=True)}">{html.escape(format_event_timestamp(event))}</time><span>{company}</span></div>
-  <div class="event-content"><span class="event-kind">{html.escape(event.get("kind", "signal"))}</span><p>{html.escape(clean_event_text(event.get("text", "")))}</p><span class="sr-only">Timestamp confidence: {confidence}.</span></div>
+  <div class="event-content"><span class="event-kind">{html.escape(event.get("kind", "signal"))}</span><p>{html.escape(clean_event_text(event.get("text", "")))}</p>{seen_html}<span class="sr-only">Timestamp confidence: {confidence}.</span></div>
   <a class="event-link" href="{html.escape(event["url"], quote=True)}" rel="noopener">Original ↗</a>
 </article>'''
         )
@@ -902,17 +999,66 @@ def clear_accounts(clear):
 # never starts an incident, whatever it reads.
 
 
-def match_observation(event, clears):
+def confirmed_by(event, members, withdrawn_keys=frozenset()):
+    """Would any of these clears, as they stood, confirm this announcement?
+
+    The test a post must pass to take a pair over: one member inside the
+    +-6 h match window that speaks_to() the post.
+    """
+    announced = event_epoch(event)
+    return announced is not None and any(
+        abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
+        and speaks_to(event, clear, withdrawn_keys)
+        for clear in members
+    )
+
+
+def withdrawn_verdict(clear, withdrawn_keys=frozenset()):
+    """The verdict a withdrawn clear held while it stood.
+
+    attribution never stamps a retracted clear, so on the log it reads as its
+    own class (`unattributed`, `unresolved`, ...). A member of a pair that
+    stood before the retraction (groundtruth.withdrawn_pair_clears) was a
+    `vendor_reset`, and that is what it was evidence of.
+    """
+    return groundtruth.VERDICT_VENDOR if clear.get("key") in withdrawn_keys else clear["verdict"]
+
+
+def speaks_to(event, clear, withdrawn_keys=frozenset()):
+    """Does this clear, standing or withdrawn, bear on this announcement?
+
+    Standing: incidents.corroborates says it confirms the post — its kind, its
+    stage and the verdict's own window (a banked reset is confirmed by a
+    credit grant, never by a window clear; one account's clear only inside
+    the tight window of a trusted retrospective post).
+
+    Withdrawn: only if, while it stood, it WOULD have confirmed this post by
+    that same rule, and only on a window that can pair. Any retraction within
+    the +-6 h used to count, so a 5-hour session clear taken back nearer the
+    post than a two-account pair turned a confirmed reset into
+    `reverted_on_our_account` and the post mailed nobody (review case [20]).
+    """
+    if clear.get("retracted"):
+        family = clear.get("window_family")
+        if not isinstance(family, str) or family not in attribution.PAIRING_FAMILIES:
+            return False
+        verdict = withdrawn_verdict(clear, withdrawn_keys)
+    else:
+        verdict = clear["verdict"]
+    return incidents.corroborates(event, verdict, iso_z(clear["t"]))
+
+
+def match_observation(event, clears, withdrawn_keys=frozenset()):
     """The one probe clear that speaks to this announcement, if any.
 
-    A clear is a candidate when incidents.corroborates says it confirms this
-    announcement — its kind, its stage, and the verdict's own window (a banked
-    reset is confirmed by a credit grant, never by a window clear; one
-    account's clear only inside the tight window of a trusted retrospective
-    post) — or when it is a retraction within the +-6 h match window: a
-    withdrawn clear under a standing announcement is the
-    `reverted_on_our_account` footnote, and fusion must see it precisely
-    because it is no longer evidence.
+    The nearest standing clear that confirms it, else the nearest withdrawn
+    one that would have (speaks_to): a withdrawn clear under a standing
+    announcement is the `reverted_on_our_account` footnote, and fusion must
+    see it precisely because it is no longer evidence. Standing evidence
+    wins over a withdrawal however near the withdrawal sits: an account
+    whose first clear reverted and which then cleared again beside a second
+    account has seen the announced reset, and calling the post reverted
+    would leave the standing pair to mail "not announced yet" beside it.
     """
     announced = event_epoch(event)
     if announced is None:
@@ -924,11 +1070,10 @@ def match_observation(event, clears):
         # gives a forecast no upper bound, and without this a credit grant
         # weeks later "confirmed" the 2026-08-21 forecast in rehearsal.
         if abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
-        and (
-            clear.get("retracted")
-            or incidents.corroborates(event, clear["verdict"], iso_z(clear["t"]))
-        )
+        and speaks_to(event, clear, withdrawn_keys)
     ]
+    standing = [clear for clear in candidates if not clear.get("retracted")]
+    candidates = standing or candidates
     if not candidates:
         return None
     nearest = min(candidates, key=lambda clear: (abs(clear["t"] - announced), str(clear.get("key"))))
@@ -948,9 +1093,10 @@ def probe_groups(vendor_key, clears, withdrawn=()):
     one incident per pair, however many accounts it spans. Withdrawn: the
     pairs groundtruth.withdrawn_pair_clears found a retraction has broken,
     whose readers are owed a correction. Each group is (incident_key, members
-    earliest first), the key built by incidents.probe_incident_key from the
-    earliest member's lower bracket, so a pair keeps one key from its first
-    build to its retraction.
+    earliest first), from groundtruth.probe_group_key: the key is built from
+    the earliest member's lower bracket, so a pair keeps one key from its
+    first build to its retraction, and the correction mail finds its group
+    under the same key.
     """
     # A withdrawn clear is never stamped vendor_reset (attribution excludes
     # it), so this is the live pairs and nothing else.
@@ -963,23 +1109,31 @@ def probe_groups(vendor_key, clears, withdrawn=()):
         {key: clear.get("witness") for key, clear in by_key.items()}
     )
 
-    def keyed(members):
-        ordered = sorted(
-            members,
-            key=lambda clear: (clear.get("clear_bracket_lo") or clear["t"], clear["key"]),
-        )
-        first = ordered[0]
-        key = incidents.probe_incident_key(
-            vendor_key,
-            groundtruth.window_name(first.get("window_minutes")),
-            first.get("clear_bracket_lo"),
-        )
-        return key, ordered
-
     return (
-        [keyed([by_key[key] for key in members]) for members in live],
-        [keyed(members) for members in withdrawn if members],
+        [groundtruth.probe_group_key(vendor_key, [by_key[key] for key in members])
+         for members in live],
+        [groundtruth.probe_group_key(vendor_key, members) for members in withdrawn if members],
     )
+
+
+def mailed_hold_passed(members):
+    """Could a probe-first mail have gone out before this pair broke?
+
+    Only once the lifecycle's hold had run out: it starts at the later clear
+    (fuse_incidents passes derive_status that clear as `observed_at`) and
+    nothing mails before it ends. A member whose clear or revert time cannot
+    be read answers yes — a correction owed and not sent is the worse error,
+    and the row carries no clear either way.
+    """
+    seen = [clear.get("t") for clear in members]
+    reverts = [clear.get("reverted_at") for clear in members if clear.get("retracted")]
+    readable = [
+        value for value in seen + reverts
+        if isinstance(value, int) and not isinstance(value, bool)
+    ]
+    if not reverts or len(readable) != len(seen) + len(reverts):
+        return True
+    return min(reverts) >= max(seen) + incidents.OBSERVED_HOLD_SECONDS
 
 
 def _clear_summary(clear):
@@ -1024,9 +1178,10 @@ def fuse_incidents(vendors, state_dir=None, now=None):
       - an unclaimed pair's rows carry its probe key, `origin`, `kind`, the
         account labels and both clears, and the earliest row alone carries
         the `status` (one incident, one mailable row);
-      - a pair since withdrawn is one extra row with `status: retracted`, no
-        verdict and no sentence, so the page draws nothing and the notifier
-        can still correct what it sent.
+      - a pair that stood and was since withdrawn is one extra row with
+        `status: retracted`, its key, its id and no verdict, and nothing
+        else, so the page draws nothing, the feed shows no clear, and the
+        notifier can still correct what it sent.
     """
     state = Path(state_dir) if state_dir else groundtruth.DEFAULT_STATE_DIR
     for key, vendor in vendors.items():
@@ -1053,9 +1208,19 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             print(f"skipping {key} withdrawn pairs: {error}")
             broken = []
         live, withdrawn = probe_groups(key, clears, broken)
+        withdrawn_keys = frozenset(
+            clear["key"] for _, members in withdrawn for clear in members
+        )
         claimed = {}
+        # A withdrawn pair's correction is owed under the incident it was
+        # filed under. A post that took the pair over while it stood wears
+        # its key, and so must the correction: stated under the probe key
+        # instead, the notifier renamed the post's incident back to the probe
+        # key and forward again on every tick, and opened a second owner
+        # alert for the one reversion (review case [09]).
+        withdrawn_claims = {}
         for event in events:
-            match = match_observation(event, clears)
+            match = match_observation(event, clears, withdrawn_keys)
             trusted = incidents.is_trusted_announcement(event)
             own = match
             if (
@@ -1074,22 +1239,30 @@ def fuse_incidents(vendors, state_dir=None, now=None):
                 event["incident_key"] = f"{key}:{stable_id}"
             if not (trusted and stable_id):
                 continue
+            if event["status"] in (incidents.STATUS_CONFIRMED, incidents.STATUS_REVERTED):
+                # Confirmed by the pair while it stood: reverted now if the
+                # withdrawn half was what confirmed it, still confirmed if
+                # standing evidence does.
+                for incident, members in withdrawn:
+                    if incident not in withdrawn_claims and confirmed_by(
+                        event, members, withdrawn_keys
+                    ):
+                        withdrawn_claims[incident] = event["incident_key"]
+            if event["status"] != incidents.STATUS_CONFIRMED:
+                # Only a post the pair actually CONFIRMS may take it over. A
+                # pair handed to a post that ends up reverted, historical or
+                # merely announced loses its own status row and mails as
+                # neither (review case [20]: two subscribers, no mail at all).
+                continue
             # Every pair this post confirms is this post's reset, not only the
             # nearest clear: a lone clear on another window can sit closer to
             # the post than the pair does, and leaving the pair unclaimed
             # would mail one reset twice. Events are in announcement order, so
             # the earliest trusted post that confirms a pair claims it.
-            announced = event_epoch(event)
             mine = [
                 incident
                 for incident, members in live
-                if incident not in claimed
-                and announced is not None
-                and any(
-                    abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
-                    and incidents.corroborates(event, clear["verdict"], iso_z(clear["t"]))
-                    for clear in members
-                )
+                if incident not in claimed and confirmed_by(event, members)
             ]
             for incident in mine:
                 claimed[incident] = event["incident_key"]
@@ -1140,17 +1313,31 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             next(row for row in member_rows if row is not None)["status"] = status
 
         for incident, members in withdrawn:
-            first = members[0]
+            if not mailed_hold_passed(members):
+                # Broken inside the hold, so never mailed: nobody is owed a
+                # correction, and the row would be the one public trace of
+                # the clear left standing — a lone `unattributed` clear the
+                # contract keeps private. A pair can form and break between
+                # two five-minute publishes, so "it was never on the page" is
+                # not something this build can rule out otherwise (privacy
+                # re-verification: the key and digest gave away the surviving
+                # clear's account and second).
+                print(f"no correction for {incident}: withdrawn inside the mail hold")
+                continue
+            # What the notifier needs to correct a mail it sent, and nothing
+            # a reader could learn a clear from: the key it filed the mail
+            # under, the event key it recorded, and the status. The clears,
+            # the account labels and the times stay out. The correction is
+            # composed from the notifier's own record of what it sent and from
+            # the raw log on this host (groundtruth), never from this row, so
+            # a lone clear can never ride a correction onto the public feed.
+            # check_site.WITHDRAWN_FIELDS holds the published row to exactly
+            # these keys.
             vendor.setdefault("observations", []).append({
-                **_incident_fields(incident, members),
-                "event_id": published_id(first["key"]),
+                "incident_key": withdrawn_claims.get(incident, incident),
+                "event_id": published_id(members[0]["key"]),
                 "status": incidents.STATUS_RETRACTED,
                 "verdict": None,
-                "observed_at": iso_z(first["t"]),
-                "observed_before": iso_z(first["clear_bracket_lo"])
-                if isinstance(first.get("clear_bracket_lo"), int)
-                else None,
-                "window": groundtruth.window_name(first.get("window_minutes")),
             })
 
 
