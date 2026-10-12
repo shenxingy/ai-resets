@@ -295,6 +295,10 @@ count did not fall".
 Published rows carry neither fingerprints nor raw event ids. A row's id is
 `obs-<first 12 hex digits of sha256("ai-resets/observation:" + event id)>`,
 because a Claude model-scoped slot id can contain an unreleased model's name.
+For a model-scoped id the model slug is first replaced by `#<n>`, its rank
+among that account's scoped windows clearing at the same moment, sorted by
+slug: every other part of the id is on the public row, so a digest of the raw
+id let anyone confirm a guessed codename. Ids with no model are unchanged.
 Accounts appear as their labels.
 
 ## Second Codex account

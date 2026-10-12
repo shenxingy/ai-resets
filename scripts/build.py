@@ -144,16 +144,53 @@ NO_ANNOUNCEMENTS_HTML = (
 )
 
 
-def published_id(raw_id):
-    """`obs-<12 hex>`: a stable public name for one exported record.
+# A Claude model-scoped event id: `claude:<account>:weekly_scoped:<model
+# slug>/<minutes>:<epoch>`, the slot key claude_probe writes plus the moment.
+SCOPED_EVENT_ID = re.compile(
+    r"^(?P<head>claude:[^:/]+:weekly_scoped):(?P<slug>[^/]+)/(?P<tail>[^/]+)$"
+)
+
+
+def _digest(text):
+    return f"obs-{hashlib.sha256(f'ai-resets/observation:{text}'.encode()).hexdigest()[:12]}"
+
+
+def published_ids(raw_ids):
+    """raw event id -> `obs-<12 hex>`, a stable public name for each record.
 
     The raw event id carries the probe's slot key, and a Claude model-scoped
     slot key carries a slug of the model's display name, which on 2026-09-06
     was an unreleased codename. The feed needs a stable id per row (it is the
     notifier's event key) and nothing more, so it gets a digest.
+
+    A digest of the raw id was not enough: every other part of it (account,
+    window shape, time) is on the public row, so anyone could hash a guessed
+    codename and compare (privacy review). A scoped id is digested with its
+    slug replaced by an ordinal among that account's scoped windows clearing
+    at the same moment, sorted by slug, so the digest holds no model name.
+    Every id without a model digests exactly as it always has, so no event
+    key production has filed moves.
     """
-    digest = hashlib.sha256(f"ai-resets/observation:{raw_id}".encode()).hexdigest()
-    return f"obs-{digest[:12]}"
+    raw_ids = [raw for raw in raw_ids if isinstance(raw, str)]
+    slugs = {}
+    for raw in raw_ids:
+        match = SCOPED_EVENT_ID.match(raw)
+        if match:
+            slugs.setdefault((match["head"], match["tail"]), set()).add(match["slug"])
+    out = {}
+    for raw in raw_ids:
+        match = SCOPED_EVENT_ID.match(raw)
+        if match is None:
+            out[raw] = _digest(raw)
+            continue
+        ordinal = sorted(slugs[(match["head"], match["tail"])]).index(match["slug"])
+        out[raw] = _digest(f"{match['head']}:#{ordinal}/{match['tail']}")
+    return out
+
+
+def published_id(raw_id):
+    """One record's public id, on its own (published_ids, alone in its set)."""
+    return published_ids([raw_id])[raw_id]
 
 
 def witnessed(item, vendor_rows):
@@ -200,6 +237,12 @@ def public_observations(raw):
         and item.get("verdict") == VERDICT_VENDOR_RESET
         and isinstance(item.get("event_id"), str)
     }
+    # Ordinals are counted over the whole export, private rows included, so
+    # a row's public id does not depend on which of its neighbours is public.
+    public_ids = published_ids(
+        [item.get("event_id") for item in raw if isinstance(item, dict)]
+        + [item.get("witness") for item in raw if isinstance(item, dict)]
+    )
     rows = []
     for item in raw:
         if not isinstance(item, dict) or item.get("public") is not True:
@@ -221,8 +264,8 @@ def public_observations(raw):
             # and which of our accounts it was. Labels only, never a
             # fingerprint. Other verdicts gain none of this, so the event keys
             # production already filed for them do not move.
-            row["event_id"] = published_id(item["event_id"])
-            row["witness"] = published_id(item["witness"])
+            row["event_id"] = public_ids[item["event_id"]]
+            row["witness"] = public_ids[item["witness"]]
             row["account"] = item.get("account")
         rows.append(row)
     # ISO-8601 Z strings sort lexicographically in chronological order, so this

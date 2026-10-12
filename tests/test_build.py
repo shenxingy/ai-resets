@@ -938,6 +938,65 @@ class VendorResetPublicationTests(unittest.TestCase):
             for private in ("classification", "attribution", "public", "kind"):
                 self.assertNotIn(private, row)
 
+    def test_a_published_id_cannot_confirm_a_guessed_model_name(self):
+        # Privacy review: every part of a scoped event id but the model slug
+        # is on the public row (account, window shape, time), so a digest of
+        # the raw id let anyone hash a guessed codename and compare.
+        import hashlib
+
+        def old_digest(raw):
+            return "obs-" + hashlib.sha256(f"ai-resets/observation:{raw}".encode()).hexdigest()[:12]
+
+        t = 1791700000
+        ids = {
+            ("a", "secret-codename-7"): f"claude:a:weekly_scoped:secret-codename-7/10080:{t}",
+            ("b", "secret-codename-7"): f"claude:b:weekly_scoped:secret-codename-7/10080:{t}",
+            ("a", "opus"): f"claude:a:weekly_scoped:opus/10080:{t}",
+        }
+        rows = []
+        for (account, _), raw in ids.items():
+            witness = ids[("b" if account == "a" else "a", "secret-codename-7")]
+            rows.append({
+                "event_id": raw, "kind": "clear", "classification": "unattributed",
+                "account": account, "verdict": "vendor_reset", "public": True,
+                "attribution": "two_accounts", "witness": witness,
+                "observed_at": fusion_iso(t), "window": "weekly",
+                "headline": "Our Claude Code weekly window scoped to one model cleared early.",
+            })
+        published = public_observations(rows)
+        self.assertEqual(len(published), 3)
+        blob = json.dumps(published)
+        self.assertNotIn("codename", blob)
+        public = {r["event_id"] for r in published} | {r["witness"] for r in published}
+        for guess in ("opus", "sonnet", "secret-codename-7"):
+            for account in ("a", "b"):
+                guessed = old_digest(f"claude:{account}:weekly_scoped:{guess}/10080:{t}")
+                self.assertNotIn(guessed, public)
+        # The model is replaced by its rank among that account's scoped
+        # windows at that moment, so two of them still get two ids.
+        a_ids = {r["event_id"] for r in published if r["account"] == "a"}
+        self.assertEqual(len(a_ids), 2)
+        self.assertEqual(
+            build.published_ids(list(ids.values()))[ids[("a", "opus")]],
+            old_digest(f"claude:a:weekly_scoped:#0/10080:{t}"),
+        )
+        self.assertEqual(
+            build.published_ids(list(ids.values()))[ids[("a", "secret-codename-7")]],
+            old_digest(f"claude:a:weekly_scoped:#1/10080:{t}"),
+        )
+
+    def test_an_id_without_a_model_keeps_the_digest_production_filed(self):
+        # The notifier's event keys are these digests: none may move.
+        import hashlib
+        for raw in ("codex/10080:1788143216", "b:codex/10080:1791700060",
+                    "claude:b:weekly_all/10080:1790792305", "claude:a:session/300:1791687186"):
+            with self.subTest(raw=raw):
+                expected = "obs-" + hashlib.sha256(
+                    f"ai-resets/observation:{raw}".encode()).hexdigest()[:12]
+                self.assertEqual(build.published_id(raw), expected)
+                self.assertEqual(build.published_ids([raw, "claude:a:weekly_scoped:x/10080:1"])[raw],
+                                 expected)
+
     def test_a_row_without_its_witness_beside_it_is_dropped(self):
         cases = {
             "unstamped (an old exporter)": export_pair(stamp=False),
