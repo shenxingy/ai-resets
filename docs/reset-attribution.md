@@ -286,7 +286,11 @@ their credits (`credit_ids` a list, `[]` included). It sets how much any
 published sentence or email may say about the bank. Itemised, it may say no
 credit left the bank before its expiry. Otherwise only the count was read,
 so it says "the banked credit count read N then N" and no more: a grant and
-a redemption between two polls cancel in a count.
+a redemption between two polls cancel in a count. The email follows the same
+rule for every clear it quotes (both, for a pair): "No banked credit was
+spent" only when all of them were itemised; else "the banked credit count
+was unchanged" when every count was read and equal; else "the banked credit
+count did not fall".
 
 Published rows carry neither fingerprints nor raw event ids. A row's id is
 `obs-<first 12 hex digits of sha256("ai-resets/observation:" + event id)>`,

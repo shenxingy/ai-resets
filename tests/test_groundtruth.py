@@ -671,8 +671,45 @@ class AttributedObservationTests(StateDirCase):
         self.assertIn("Seen on our Codex account a at", result["line"])
         self.assertIn("(60% to 0%), 2 min before this post: the weekly window cleared 3.0 days "
                       "before its scheduled expiry.", result["line"])
-        self.assertIn("No banked credit was spent and the account did not change.", result["line"])
+        # Only the count was read (1 then 1): that is all the mail may say.
+        self.assertIn("The banked credit count was unchanged and the account did not change.",
+                      result["line"])
+        self.assertNotIn("spent", result["line"])
         self.assertNotIn("landed", result)
+
+    def test_no_credit_was_spent_only_when_the_bank_was_itemised(self):
+        # Privacy review: an unchanged COUNT cannot show that nothing left,
+        # because a grant and a redemption between two polls cancel. The
+        # stronger clause needs credit ids listed on both sides, which the
+        # probe records as `credit_itemised`.
+        for edit, expected in (
+            ({"credit_itemised": True},
+             "No banked credit was spent and the account did not change."),
+            ({"credit_itemised": "yes"},
+             "The banked credit count was unchanged and the account did not change."),
+            ({}, "The banked credit count was unchanged and the account did not change."),
+            ({"credits_before": 1, "credits_after": 2},
+             "The banked credit count did not fall and the account did not change."),
+            ({"credits_before": None, "credits_after": None},
+             "The banked credit count did not fall and the account did not change."),
+        ):
+            with self.subTest(edit=edit):
+                self.write_events([attributed_clear("a", "aaaaaaaaaaaa", self.POST - 120, **edit)])
+                result = self.line(kind="reset", announced_at=self.POST, trusted=True)
+                self.assertIn(expected, result["line"])
+
+    def test_a_pair_says_no_credit_was_spent_only_if_both_banks_were_itemised(self):
+        for itemised, expected in (
+            ((True, True), "No banked credit was spent"),
+            ((True, False), "The banked credit count was unchanged"),
+            ((False, True), "The banked credit count was unchanged"),
+        ):
+            with self.subTest(itemised=itemised):
+                a = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 300, credit_itemised=itemised[0])
+                b = attributed_clear("b", "bbbbbbbbbbbb", self.POST - 180, credit_itemised=itemised[1])
+                self.write_events([a, b])
+                result = self.line(kind="reset", announced_at=self.POST, trusted=False)
+                self.assertIn(expected, result["line"])
 
     def test_one_claude_account_names_the_reset_menu_instead_of_the_bank(self):
         self.claude_events([attributed_clear("b", "bbbbbbbbbbbb", self.POST + 23, family="weekly_all")])
@@ -710,8 +747,20 @@ class AttributedObservationTests(StateDirCase):
         self.assertTrue(result["observed"])
         self.assertEqual(result["verdict"], VERDICT_VENDOR)
         self.assertIn("Seen on two of our Codex accounts: account a at", result["line"])
-        self.assertIn("(60% to 0%) and account b at", result["line"])
-        self.assertIn("(88% to 0%), 5 min before this post and 3 min before this post", result["line"])
+        # Each account carries its own timing (review case [02]).
+        self.assertIn("(60% to 0%), 5 min before this post, and account b at", result["line"])
+        self.assertIn("(88% to 0%), 3 min before this post. On each", result["line"])
+
+    def test_two_accounts_cleared_alike_are_timed_once_not_twice(self):
+        # Review case [02]: "14 min before this post and 14 min before this
+        # post". Two clears inside the same minute share one phrase.
+        a = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 14 * 60 - 20)
+        b = attributed_clear("b", "bbbbbbbbbbbb", self.POST - 14 * 60, used=88.0)
+        self.write_events([a, b])
+        line = self.line(kind="reset", announced_at=self.POST, trusted=True)["line"]
+        self.assertIn("(60% to 0%) and account b at", line)
+        self.assertIn("(88% to 0%), both 14 min before this post. On each", line)
+        self.assertEqual(line.count("before this post"), 1)
 
     def test_a_forecast_reset_seen_by_two_accounts_has_landed(self):
         a = attributed_clear("a", "aaaaaaaaaaaa", self.POST + 5 * 3600)
@@ -768,11 +817,42 @@ class ProbeFirstLineTests(StateDirCase):
         self.assertTrue(result["observed"])
         self.assertEqual(result["verdict"], VERDICT_VENDOR)
         line = result["line"]
-        self.assertIn("Seen on two of our Claude accounts before anyone announced it", line)
+        # Review case [15]: an unverified post can sit beside the pair, so
+        # "before anyone announced it" was more than we know.
+        self.assertIn("Seen on two of our Claude accounts before any source we could verify "
+                      "announced it", line)
+        self.assertNotIn("anyone", line)
         self.assertIn("account a at Sep 4, 2026, 7:00 PM PDT (48% to 0%)", line)
         self.assertIn("account b at Sep 4, 2026, 7:03 PM PDT (60% to 1%)", line)
         self.assertIn("no reset menu was opened on this machine", line)
         self.assertNotIn("Not observed", line)
+
+    def test_the_bank_clause_comes_from_each_clear_s_own_record(self):
+        # The published row quotes the clears but not their banks; how much
+        # the mail may say about the bank is read off the log, and a clear the
+        # log no longer holds earns only the weakest clause.
+        moment = 1788573600 - 3600
+        row = {
+            "vendor": "openai", "origin": "probe", "window": "weekly",
+            "clears": [
+                {"account": "a", "observed_at": "2026-09-05T01:00:00Z"},
+                {"account": "b", "observed_at": "2026-09-05T01:03:00Z"},
+            ],
+        }
+        for itemised, expected in (
+            (True, "No banked credit was spent and the account did not change."),
+            (False, "The banked credit count was unchanged and the account did not change."),
+            (None, "The banked credit count did not fall and the account did not change."),
+        ):
+            with self.subTest(itemised=itemised):
+                records = [] if itemised is None else [
+                    attributed_clear("a", "aaaaaaaaaaaa", moment, credit_itemised=itemised),
+                    attributed_clear("b", "bbbbbbbbbbbb", moment + 180, credit_itemised=itemised),
+                ]
+                (self.state / "quota_events.jsonl").write_text(
+                    "".join(json.dumps(r) + "\n" for r in records))
+                line = probe_first_line(row, state_dir=self.state)["line"]
+                self.assertIn(expected, line)
 
     def test_without_stamped_clears_it_reads_the_log(self):
         moment = 1788573600 - 3600

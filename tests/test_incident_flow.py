@@ -141,7 +141,8 @@ class FlowCase(unittest.TestCase):
                 events += cp.observe_rows(detector, rows, state)
         return events
 
-    def codex_polls(self, before=80):
+    def codex_polls(self, before=80, credit_ids=()):
+        """`credit_ids=None` is a response that carried only the bank's COUNT."""
         detector, events = qp.Detector(), []
         for i, level in enumerate((before, 0, 0)):
             events += detector.observe({
@@ -149,7 +150,7 @@ class FlowCase(unittest.TestCase):
                 "window_minutes": 10080, "used_percent": level,
                 "resets_at": T0 + (3 if i == 0 else 7) * DAY,
                 "credits_available": 1, "plan_type": "pro", "account": "a",
-                "account_fp": FP_A, "credit_ids": [],
+                "account_fp": FP_A, "credit_ids": None if credit_ids is None else list(credit_ids),
             })
         return events
 
@@ -236,10 +237,10 @@ class TwoAccountFlowTests(FlowCase):
         self.assertEqual(len(mails), 2)
         self.assertEqual(
             mails[0]["subject"],
-            "Claude Code: weekly limits reset on two of our accounts — not announced yet",
+            "Claude Code: weekly limits reset on two of our accounts — no verified announcement yet",
         )
         body = mails[0]["text_body"]
-        self.assertIn("Seen on two of our Claude accounts before anyone announced it: account a", body)
+        self.assertIn("Seen on two of our Claude accounts before any source we could verify announced it: account a", body)
         self.assertIn("and account b", body)
         self.assertIn("no reset menu was opened on this machine", body)
         self.assertNotIn("Not observed", body)
@@ -392,10 +393,10 @@ class CodexTwoAccountFlowTests(FlowCase):
         self.assertEqual(len(mails), 2)
         self.assertEqual(
             mails[0]["subject"],
-            "Codex: weekly limits reset on two of our accounts — not announced yet",
+            "Codex: weekly limits reset on two of our accounts — no verified announcement yet",
         )
         body = mails[0]["text_body"]
-        self.assertIn("Seen on two of our Codex accounts before anyone announced it: account a", body)
+        self.assertIn("Seen on two of our Codex accounts before any source we could verify announced it: account a", body)
         self.assertIn("and account b", body)
         self.assertIn("No banked credit was spent and the account did not change.", body)
         self.assertEqual({k for k, *_ in self.deliveries()}, {key})
@@ -464,6 +465,24 @@ class CodexTwoAccountFlowTests(FlowCase):
         self.ticks(T0 + 9100, count=2)
         corrections = [m for m in self.mails() if "withdrawing" in m["subject"]]
         self.assertEqual(len(corrections), 2)
+
+    def test_an_unverified_staff_post_beside_the_pair_is_not_called_no_announcement(self):
+        # Review case [15]: a reviewed staff member posted 4 minutes after the
+        # pair, but the post failed text verification, so the pair mails as
+        # probe-first. It must not tell subscribers that nobody announced it.
+        self.export("openai", self.codex_pair_polls())
+        post = trusted_post("2109132167112782291", T0 + 300, vendor="openai",
+                            text="Reset all propagated.", announcer="thsottiaux")
+        post["text_verified"] = False
+        self.posts["openai"] = [post]
+        self.build(T0 + 65 + HOLD)
+        self.notify(T0 + 65 + HOLD)
+        body = self.mails()[0]["text_body"]
+        self.assertIn("Codex: weekly limits reset on two of our accounts, not yet announced by "
+                      "a source we could verify.", body)
+        self.assertIn("before any source we could verify announced it", body)
+        self.assertNotIn("nobody", body)
+        self.assertNotIn("anyone", body)
 
     def probe_deliveries(self, key):
         with self.store.connect() as conn:
@@ -574,7 +593,7 @@ class CodexTwoAccountFlowTests(FlowCase):
         self.notify(T0 + 65 + HOLD + 600)
         self.assertEqual(
             [m["subject"] for m in self.mails()],
-            ["Codex: weekly limits reset on two of our accounts — not announced yet"] * 2,
+            ["Codex: weekly limits reset on two of our accounts — no verified announcement yet"] * 2,
         )
 
     def test_a_clear_withdrawn_before_the_other_account_cleared_is_nothing_public(self):
@@ -708,7 +727,7 @@ class OneResetOneIncidentFlowTests(FlowCase):
         self.assertEqual(sum("status" in r for r in rows), 1)
         self.assertEqual(
             [m["subject"] for m in self.mails()],
-            ["Claude Code: weekly limits reset on two of our accounts — not announced yet"] * 2,
+            ["Claude Code: weekly limits reset on two of our accounts — no verified announcement yet"] * 2,
         )
         self.assertEqual(len({key for key, *_ in self.deliveries()}), 1)
 
@@ -788,6 +807,20 @@ class SingleAccountFlowTests(FlowCase):
         self.assertIn("2 min before this post", body)
         self.assertIn("No banked credit was spent and the account did not change.", body)
         self.assertEqual({claim for *_, claim in self.deliveries()}, {"settled"})
+
+    def test_c_a_count_only_bank_is_not_called_unspent(self):
+        # Privacy review, SingleAccountConfirmCopy: the response carried only
+        # the bank's count (1 then 1), which cannot show that no credit left.
+        self.export("openai", self.codex_polls(credit_ids=None))
+        self.posts["openai"] = [trusted_post(
+            "2109132167112782291", T0 + 60 + 120, vendor="openai",
+            text="Reset all propagated.", announcer="thsottiaux",
+        )]
+        self.build(T0 + 660)
+        self.notify(T0 + 660)
+        body = self.mails()[0]["text_body"]
+        self.assertIn("The banked credit count was unchanged and the account did not change.", body)
+        self.assertNotIn("spent", body)
 
     def test_c_a_clear_after_the_post_sends_the_one_promised_confirmation(self):
         # The post first, then our account 30 min later: the first mail could

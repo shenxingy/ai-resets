@@ -118,6 +118,13 @@ class ProbeSpec:
     # (docs/reset-attribution.md, "The rule"), so the sentence is per probe.
     own_causes_clause: str = ""
     product: str = ""
+    # What the same sentence may say about a banked-credit ledger, strongest
+    # first, for a probe that has one; bank_clause() picks the strongest the
+    # clears earn. "Spent" needs every credit itemised on both sides of every
+    # clear quoted: an unchanged COUNT cannot show that nothing left, because
+    # a grant and a redemption between two polls cancel in a count (privacy
+    # review). Without the list, the count is all that may be quoted.
+    bank_clauses: tuple[str, ...] = ()
 
     def exists(self, root: Path | None = None) -> bool:
         """Does this probe actually ship? A spec for a script that is not here
@@ -135,8 +142,13 @@ PROBE_SPECS = {
         weekly_kinds=("codex/10080",),
         script="quota_probe.py",
         has_usage_reading=True,
-        own_causes_clause="no banked credit was spent and the account did not change",
+        own_causes_clause="the account did not change",
         product="Codex",
+        bank_clauses=(
+            "no banked credit was spent",
+            "the banked credit count was unchanged",
+            "the banked credit count did not fall",
+        ),
     ),
     "anthropic": ProbeSpec(
         vendor="anthropic",
@@ -219,6 +231,7 @@ def clear_observations(
     # exporters run it: this reader must never decide a different verdict
     # for the same record than the published feed did.
     records = attribution.attribute(records)
+    by_id = attribution.latest_clears(records)
     clears: dict[str, dict[str, Any]] = {}
     retracted: set[str] = set()
     for event in records:
@@ -261,6 +274,9 @@ def clear_observations(
             "credits_before": event.get("credits_before"),
             "credits_after": event.get("credits_after"),
             "credits_carried": bool(event.get("credits_carried")),
+            # Whether the bank listed its credits on both sides (quota_probe
+            # writes it): how much a sentence about the bank may claim.
+            "credit_itemised": event.get("credit_itemised") is True,
             # What fusion needs to key a probe-first incident and the email
             # needs to say which account saw it. Labels and times only: the
             # fingerprints stay in the log.
@@ -275,6 +291,12 @@ def clear_observations(
         if vendor_reset:
             for field in attribution.STAMPED_FIELDS:
                 row[field] = event.get(field)
+            # The witness's own bank, read off its own record: the email
+            # speaks for both accounts' credits, not only this one's.
+            witness = by_id.get(str(event.get("witness"))) or {}
+            row["witness_credit_itemised"] = witness.get("credit_itemised") is True
+            row["witness_credits_before"] = witness.get("credits_before")
+            row["witness_credits_after"] = witness.get("credits_after")
         if include_retracted:
             row["retracted"] = withdrawn
         out.append(row)
@@ -502,6 +524,9 @@ def pair_summaries(clear: dict[str, Any]) -> list[dict[str, Any]]:
             "observed_at": clear.get("t"),
             "used_before": clear.get("used_before"),
             "used_after": clear.get("used_after"),
+            "credit_itemised": clear.get("credit_itemised") is True,
+            "credits_before": clear.get("credits_before"),
+            "credits_after": clear.get("credits_after"),
         }
     ]
     if clear.get("verdict") == VERDICT_VENDOR:
@@ -511,9 +536,58 @@ def pair_summaries(clear: dict[str, Any]) -> list[dict[str, Any]]:
                 "observed_at": clear.get("witness_at"),
                 "used_before": clear.get("witness_used_before"),
                 "used_after": clear.get("witness_used_after"),
+                "credit_itemised": clear.get("witness_credit_itemised") is True,
+                "credits_before": clear.get("witness_credits_before"),
+                "credits_after": clear.get("witness_credits_after"),
             }
         )
     return sorted(summaries, key=lambda c: _epoch_of(c.get("observed_at")) or 0)
+
+
+def bank_clause(spec: ProbeSpec | None, clears: list[dict[str, Any]]) -> str:
+    """`No banked credit was spent and the account did not change.`, earned.
+
+    The strongest of spec.bank_clauses the quoted clears support: every
+    clear itemised on both sides; else every count read and equal; else
+    only that the count did not fall, which every `unattributed` clear's
+    credit check already established. A probe with no bank says its own
+    clause unchanged.
+    """
+    rest = (spec.own_causes_clause if spec else "") or "nothing our probe can see explained it"
+    if spec is None or not spec.bank_clauses:
+        return _sentence(rest)
+    strongest, unchanged, not_lower = spec.bank_clauses
+    if clears and all(clear.get("credit_itemised") is True for clear in clears):
+        bank = strongest
+    elif clears and all(
+        _level(clear.get("credits_before"))
+        and clear.get("credits_before") == clear.get("credits_after")
+        for clear in clears
+    ):
+        bank = unchanged
+    else:
+        bank = not_lower
+    return _sentence(f"{bank} and {rest}")
+
+
+def _timed(clears: list[dict[str, Any]], announced_at: int) -> str:
+    """`account a at ... (80% to 0%), 2 min before this post`, each its own.
+
+    Two clears share one phrase only when it is the same phrase ("both 14
+    min before this post"); a list of timings after a list of accounts read
+    "14 min before this post and 14 min before this post".
+    """
+    timings = [
+        _relative_to_post(moment, announced_at) if moment is not None else ""
+        for moment in (_epoch_of(clear.get("observed_at")) for clear in clears)
+    ]
+    if len(clears) > 1 and len(set(timings)) == 1 and timings[0]:
+        quantifier = "both" if len(clears) == 2 else "all"
+        return f"{' and '.join(_one_clear(c) for c in clears)}, {quantifier} {timings[0]}"
+    return ", and ".join(
+        f"{_one_clear(clear)}, {timing}" if timing else _one_clear(clear)
+        for clear, timing in zip(clears, timings)
+    )
 
 
 def observed_line(
@@ -525,18 +599,13 @@ def observed_line(
     only basis on which one account's clear could have confirmed anything.
     """
     window = window_name(clear.get("window_minutes"))
-    clause = _sentence(spec.own_causes_clause or "nothing this probe can see explained it")
     clears = pair_summaries(clear)
-    timing = " and ".join(
-        _relative_to_post(moment, announced_at)
-        for moment in (_epoch_of(c.get("observed_at")) for c in clears)
-        if moment is not None
-    )
+    clause = bank_clause(spec, clears)
     if len(clears) > 1:
         line = (
             f"Seen on two of our {spec.product} accounts: "
-            f"{' and '.join(_one_clear(c) for c in clears)}, {timing}. On each the "
-            f"{window} window cleared early. {clause}"
+            f"{_timed(clears, announced_at)}. On each the {window} window cleared "
+            f"early. {clause}"
         )
     else:
         early = clear.get("early_by_seconds")
@@ -546,7 +615,7 @@ def observed_line(
             else " early"
         )
         line = (
-            f"Seen on our {spec.product} {_one_clear(clears[0])}, {timing}: the "
+            f"Seen on our {spec.product} {_timed(clears, announced_at)}: the "
             f"{window} window cleared{early_phrase}. {clause}"
         )
     result: dict[str, Any] = {
@@ -579,9 +648,9 @@ def probe_first_line(
     vendor = str(event.get("vendor") or "")
     spec = PROBE_SPECS.get(vendor)
     product = spec.product if spec else incidents.vendor_product(vendor)
-    clause = _sentence(
-        (spec.own_causes_clause if spec else "") or "nothing our probe can see explained it"
-    )
+    logged = [
+        row for row in clear_observations(state_dir, vendor=vendor) if row["verdict"] == VERDICT_VENDOR
+    ]
     clears = sorted(
         (clear for clear in (event.get("clears") or []) if isinstance(clear, dict)),
         key=lambda c: _epoch_of(c.get("observed_at")) or 0,
@@ -590,10 +659,8 @@ def probe_first_line(
         seen = _epoch_of(event.get("observed_at"))
         near = [
             row
-            for row in clear_observations(state_dir, vendor=vendor)
-            if row["verdict"] == VERDICT_VENDOR
-            and seen is not None
-            and abs(row["t"] - seen) <= MATCH_WINDOW_SECONDS
+            for row in logged
+            if seen is not None and abs(row["t"] - seen) <= MATCH_WINDOW_SECONDS
         ]
         if near and seen is not None:
             clears = pair_summaries(min(near, key=lambda row: (abs(row["t"] - seen), row["key"])))
@@ -606,11 +673,20 @@ def probe_first_line(
                 "used_after": event.get("used_after"),
             }
         ]
+    # The published row quotes each clear but not its bank, which stays in
+    # the log: each clear's own record says how much the clause may claim,
+    # and a clear the log no longer holds earns only the weakest clause.
+    by_moment = {(row.get("account"), row["t"]): row for row in logged}
+    clause = bank_clause(spec, [
+        by_moment.get((clear.get("account"), _epoch_of(clear.get("observed_at")))) or clear
+        for clear in clears
+    ])
     window = str(event.get("window") or "") or "usage"
     described = " and ".join(_one_clear(clear) for clear in clears)
     if len(clears) > 1:
         line = (
-            f"Seen on two of our {product} accounts before anyone announced it: "
+            f"Seen on two of our {product} accounts before any source we could verify "
+            "announced it: "
             f"{described}. On each the {window} window cleared early. {clause} One "
             "account alone cannot tell its holder's own reset from the vendor's; two "
             "separate accounts clearing within the hour is why we are writing."
