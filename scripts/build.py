@@ -7,8 +7,10 @@ search engines, social crawlers, and text-only clients can read the current
 signals without executing JavaScript.
 """
 
+import hashlib
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -21,6 +23,7 @@ if str(ROOT) not in sys.path:
     # than the repository root.
     sys.path.insert(0, str(ROOT))
 
+from scripts import attribution  # noqa: E402
 from scripts import groundtruth  # noqa: E402
 from scripts import incidents  # noqa: E402
 from scripts.timefmt import (  # noqa: E402
@@ -89,14 +92,20 @@ OBSERVED_DIR = DATA_DIR / "observed"
 
 # The public verdicts, in the words a reader sees. `self_applied` and
 # `credit_granted` are deliberately absent: they say what the OWNER did with
-# their own account, not what the vendor did, and are never published.
+# their own account, not what the vendor did, and are never published. So are
+# `unresolved`, `unattributed` (one account, however clean) and
+# `account_change`. `vendor_reset` is back, but only as scripts/attribution.py
+# produces it: two of our accounts clearing within the hour.
 VERDICT_LABELS = {
     "natural_expiry": "Scheduled expiry",
     "limit_change": "Limits rescaled",
+    "vendor_reset": "Vendor reset · two accounts",
 }
+VERDICT_VENDOR_RESET = "vendor_reset"
 # Reject stale exports too: an older exporter may still have marked an early
-# account clear public. Neither its flag nor its legacy vendor_reset verdict
-# supplies the missing evidence about personal redemption.
+# account clear public, and its legacy vendor_reset verdict names no witness.
+# A vendor_reset row is admitted only with the second account's row beside it
+# (witnessed()), which no exporter before scripts/attribution.py could write.
 PUBLIC_VERDICTS = frozenset(VERDICT_LABELS)
 
 # Whitelists, not blacklists. The probe export is written by another program on
@@ -135,13 +144,47 @@ NO_ANNOUNCEMENTS_HTML = (
 )
 
 
+def published_id(raw_id):
+    """`obs-<12 hex>`: a stable public name for one exported record.
+
+    The raw event id carries the probe's slot key, and a Claude model-scoped
+    slot key carries a slug of the model's display name, which on 2026-09-06
+    was an unreleased codename. The feed needs a stable id per row (it is the
+    notifier's event key) and nothing more, so it gets a digest.
+    """
+    digest = hashlib.sha256(f"ai-resets/observation:{raw_id}".encode()).hexdigest()
+    return f"obs-{digest[:12]}"
+
+
+def witnessed(item, vendor_rows):
+    """Is this vendor_reset row backed by its second account's row?
+
+    The row must carry scripts/attribution.py's stamp, and the witness it names
+    must be another row of the same export that is itself a public, stamped
+    vendor_reset on a different account. A stale or hand-edited export that
+    says `vendor_reset` without all of that is dropped, which is the gate that
+    kept 2026-09-30's legacy rows private and still does.
+    """
+    if not attribution.is_vendor_reset(item):
+        return False
+    other = vendor_rows.get(item.get("witness"))
+    # A row naming itself already fails is_vendor_reset() above.
+    return (
+        other is not None
+        and other.get("public") is True
+        and attribution.is_vendor_reset(other)
+        and other.get("account") != item.get("account")
+    )
+
+
 def public_observations(raw):
     """The rows that may be shown, newest first.
 
     Two independent gates, because publishing a `self_applied` clear would tell
     the world what the owner spent their own banked credit on: the exporter's
     `public` flag AND the verdict itself. Either one alone failing is enough to
-    drop the row.
+    drop the row. A `vendor_reset` has a third: its witness must be in the
+    same export (witnessed()).
     """
     if raw is None:
         return []
@@ -150,6 +193,13 @@ def public_observations(raw):
         # TypeError out of build.py and abort the tick before the rsync.
         print("skipping observations: not a list")
         return []
+    vendor_rows = {
+        item["event_id"]: item
+        for item in raw
+        if isinstance(item, dict)
+        and item.get("verdict") == VERDICT_VENDOR_RESET
+        and isinstance(item.get("event_id"), str)
+    }
     rows = []
     for item in raw:
         if not isinstance(item, dict) or item.get("public") is not True:
@@ -157,12 +207,23 @@ def public_observations(raw):
         verdict = item.get("verdict")
         if verdict not in PUBLIC_VERDICTS:
             continue
+        if verdict == VERDICT_VENDOR_RESET and not witnessed(item, vendor_rows):
+            continue
         if not (item.get("headline") or item.get("evidence")):
             # Nothing a reader could see. A row with no sentence on it is a
             # blank bullet, not evidence.
             continue
         row = {field: item[field] for field in OBSERVATION_FIELDS if field in item}
         row["verdict"] = verdict
+        if verdict == VERDICT_VENDOR_RESET:
+            # What the notifier and the fusion layer need to treat the pair as
+            # one incident: a stable id per row, the row it is paired with,
+            # and which of our accounts it was. Labels only, never a
+            # fingerprint. Other verdicts gain none of this, so the event keys
+            # production already filed for them do not move.
+            row["event_id"] = published_id(item["event_id"])
+            row["witness"] = published_id(item["witness"])
+            row["account"] = item.get("account")
         rows.append(row)
     # ISO-8601 Z strings sort lexicographically in chronological order, so this
     # needs no parsing and cannot raise on a malformed timestamp.
@@ -240,6 +301,31 @@ def observation_note(probe, total, shown):
     )
 
 
+def renderable_observations(rows):
+    """The rows a renderer may draw: a known label, and a vendor_reset only
+    beside the row it names as its witness.
+
+    public_observations() already enforces both; this is the renderer's own
+    lock, so a row handed to it by any other route still cannot draw a
+    "Vendor reset" on one account's word.
+    """
+    rows = [row for row in rows or [] if isinstance(row, dict)]
+    ids = {
+        row.get("event_id")
+        for row in rows
+        if row.get("verdict") == VERDICT_VENDOR_RESET and isinstance(row.get("event_id"), str)
+    }
+    return [
+        row
+        for row in rows
+        if row.get("verdict") in VERDICT_LABELS
+        and (
+            row.get("verdict") != VERDICT_VENDOR_RESET
+            or (row.get("witness") in ids and row.get("witness") != row.get("event_id"))
+        )
+    ]
+
+
 def build_observations(vendor):
     """The static twin of renderObservations() in site/app.js.
 
@@ -247,10 +333,7 @@ def build_observations(vendor):
     same label vocabulary; tests/test_build.py fails if one side grows a term
     the other does not have.
     """
-    rows = [
-        row for row in vendor.get("observations") or []
-        if row.get("verdict") in VERDICT_LABELS
-    ]
+    rows = renderable_observations(vendor.get("observations"))
     if not rows:
         return ""
     shown = rows[:OBSERVATIONS_SHOWN]
@@ -350,7 +433,9 @@ def build_vendor_cards(vendors, generated):
         if not events and not observations_html:
             continue
         company, product = VENDOR_META[key]
-        badge_text, badge_state = probe_badge(vendor.get("probe"), generated, vendor.get("observations"))
+        badge_text, badge_state = probe_badge(
+            vendor.get("probe"), generated, renderable_observations(vendor.get("observations"))
+        )
         # A vendor can now be probe-only: data/openai.json is a gitignored
         # fetch cache, so on a fresh clone the probe export is the only thing
         # this vendor has. Rendering the announcement block against an empty
@@ -727,11 +812,19 @@ def annotate_announcements(vendors, state_dir=None):
     already shows what a vendor SAID; without this it never shows whether that
     reached a real account, which is the only part we can actually check.
 
-    Confirmation requires a `vendor_reset` verdict. Current account probes
-    cannot supply that verdict: legacy global candidates are unresolved. A natural expiry says nothing about the vendor, and a
+    Confirmation follows incidents.corroborates, the rule the lifecycle uses:
+    a `vendor_reset` (two of our accounts) within +-6 h, or one account's
+    `unattributed` clear between three hours before and one hour after a
+    TRUSTED retrospective reset post. Legacy global candidates are unresolved
+    and confirm nothing. A natural expiry says nothing about the vendor, and a
     self-applied clear says what the account holder did with their own banked
     credit — offering either as corroboration would be false and, in the second
     case, would publish something private.
+
+    A confirmed annotation names the verdict, our account label(s) and the
+    signed minutes between our clear and the post (`lead_minutes`, positive
+    when our account saw it first), so the page can say "seen on account b
+    2 min before the post" without re-reading the probe.
     """
     state = Path(state_dir) if state_dir else groundtruth.DEFAULT_STATE_DIR
     running = groundtruth.probed_vendors(state)
@@ -753,16 +846,23 @@ def annotate_announcements(vendors, state_dir=None):
         except Exception as error:  # never take the publish down for an annotation
             print(f"skipping {key} annotations: {error}")
             continue
-        resets = [o for o in observations if o["verdict"] == groundtruth.VERDICT_VENDOR]
+        clears = [
+            o for o in observations
+            if o["verdict"] in (groundtruth.VERDICT_VENDOR, incidents.VERDICT_UNATTRIBUTED)
+        ]
         for event in vendor.get("events") or []:
             announced = event_epoch(event)
             if announced is None:
                 continue
-            near = [o for o in resets if abs(o["t"] - announced) <= OBSERVED_MATCH_SECONDS]
+            near = [
+                o for o in clears
+                if abs(o["t"] - announced) <= OBSERVED_MATCH_SECONDS
+                and incidents.corroborates(event, o["verdict"], iso_z(o["t"]))
+            ]
             if not near:
                 event["observed"] = {"status": OBSERVED_NOT_SEEN}
                 continue
-            match = min(near, key=lambda o: abs(o["t"] - announced))
+            match = min(near, key=lambda o: (abs(o["t"] - announced), o["key"]))
             lead = announced - match["t"]
             event["observed"] = {
                 "status": OBSERVED_CONFIRMED,
@@ -770,6 +870,9 @@ def annotate_announcements(vendors, state_dir=None):
                 # Negative means the announcement came first; positive means we
                 # saw it first. The sign is the interesting part.
                 "lead_seconds": lead,
+                "lead_minutes": int(math.floor(lead / 60 + 0.5)),
+                "verdict": match["verdict"],
+                "accounts": clear_accounts(match),
             }
 
 
@@ -777,61 +880,157 @@ def iso_z(epoch):
     return datetime.fromtimestamp(int(epoch), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def clear_accounts(clear):
+    """The account labels behind one clear row: its own, and its witness's."""
+    labels = []
+    for field in ("account", "witness_account"):
+        label = clear.get(field)
+        if isinstance(label, str) and label and label not in labels:
+            labels.append(label)
+    return sorted(labels)
+
+
 # ─── Incident fusion: what each announcement IS, written once ────────────────
 #
 # The lifecycle states (docs/robustness-plan.md, "Incident lifecycle") are
 # derived here, at build time, and stamped onto every event so the page and
 # the notifier read `status` from site/data.json instead of each recomputing
-# it. Probe-first rows are NOT created here yet: what a single-account clear
-# may claim on its own is an owner decision (the plan's Decision row), and
-# until then an unmatched own-account clear stays in the observations column
-# only.
+# it. A probe-first incident is created here too, and only from what the
+# owner's 2026-10-11 decision allows (docs/reset-attribution.md): a
+# `vendor_reset` pair that no trusted announcement claims. One account's clear
+# never starts an incident, whatever it reads.
 
 
 def match_observation(event, clears):
     """The one probe clear that speaks to this announcement, if any.
 
-    A clear is a candidate when it sits inside the +-6 h match window and is
-    either a corroborating verdict for the announcement's own kind (a banked
-    reset is confirmed by a credit grant, never by a window clear) or a
-    retraction — a withdrawn clear under a standing announcement is the
+    A clear is a candidate when incidents.corroborates says it confirms this
+    announcement — its kind, its stage, and the verdict's own window (a banked
+    reset is confirmed by a credit grant, never by a window clear; one
+    account's clear only inside the tight window of a trusted retrospective
+    post) — or when it is a retraction within the +-6 h match window: a
+    withdrawn clear under a standing announcement is the
     `reverted_on_our_account` footnote, and fusion must see it precisely
     because it is no longer evidence.
     """
     announced = event_epoch(event)
     if announced is None:
         return None
-    confirming = incidents.CONFIRMING_VERDICTS.get(incidents.event_kind(event), ())
     candidates = [
         clear
         for clear in clears
+        # The +-6 h match window bounds every candidate first. derive_status
+        # gives a forecast no upper bound, and without this a credit grant
+        # weeks later "confirmed" the 2026-08-21 forecast in rehearsal.
         if abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
-        and (clear.get("retracted") or clear["verdict"] in confirming)
+        and (
+            clear.get("retracted")
+            or incidents.corroborates(event, clear["verdict"], iso_z(clear["t"]))
+        )
     ]
     if not candidates:
         return None
-    nearest = min(candidates, key=lambda clear: abs(clear["t"] - announced))
+    nearest = min(candidates, key=lambda clear: (abs(clear["t"] - announced), str(clear.get("key"))))
     return {
         "verdict": nearest["verdict"],
         "observed_at": iso_z(nearest["t"]),
         "retracted": bool(nearest.get("retracted")),
+        "witness": nearest.get("witness"),
+        "key": nearest.get("key"),
+    }
+
+
+def probe_groups(vendor_key, clears, withdrawn=()):
+    """The probe-first incidents in one vendor's clears: (live, withdrawn).
+
+    Live: the `vendor_reset` clears joined through the witness each names —
+    one incident per pair, however many accounts it spans. Withdrawn: the
+    pairs groundtruth.withdrawn_pair_clears found a retraction has broken,
+    whose readers are owed a correction. Each group is (incident_key, members
+    earliest first), the key built by incidents.probe_incident_key from the
+    earliest member's lower bracket, so a pair keeps one key from its first
+    build to its retraction.
+    """
+    # A withdrawn clear is never stamped vendor_reset (attribution excludes
+    # it), so this is the live pairs and nothing else.
+    by_key = {
+        clear["key"]: clear
+        for clear in clears
+        if clear.get("key") and clear["verdict"] == groundtruth.VERDICT_VENDOR
+    }
+    live = attribution.pair_components(
+        {key: clear.get("witness") for key, clear in by_key.items()}
+    )
+
+    def keyed(members):
+        ordered = sorted(
+            members,
+            key=lambda clear: (clear.get("clear_bracket_lo") or clear["t"], clear["key"]),
+        )
+        first = ordered[0]
+        key = incidents.probe_incident_key(
+            vendor_key,
+            groundtruth.window_name(first.get("window_minutes")),
+            first.get("clear_bracket_lo"),
+        )
+        return key, ordered
+
+    return (
+        [keyed([by_key[key] for key in members]) for members in live],
+        [keyed(members) for members in withdrawn if members],
+    )
+
+
+def _clear_summary(clear):
+    """One clear as the email's ground-truth block quotes it: labels, never fingerprints."""
+    return {
+        "account": clear.get("account"),
+        "observed_at": iso_z(clear["t"]),
+        "used_before": clear.get("used_before"),
+        "used_after": clear.get("used_after"),
+    }
+
+
+def _incident_fields(key, members):
+    accounts = sorted({c.get("account") for c in members if isinstance(c.get("account"), str)})
+    return {
+        "incident_key": key,
+        "origin": incidents.ORIGIN_PROBE,
+        "kind": incidents.KIND_RESET,
+        "accounts": accounts,
+        "clears": [_clear_summary(clear) for clear in sorted(members, key=lambda c: c["t"])],
     }
 
 
 def fuse_incidents(vendors, state_dir=None, now=None):
-    """Stamp every event with its incident `status` and `incident_key`.
+    """Stamp every event with its incident `status` and `incident_key`, and
+    turn each unclaimed two-account pair into one probe-first incident.
 
     One clock for the whole build, the same instant the notifier's own guards
     use, so a forecast cannot be "still watching" in data.json and "lapsed" in
     the email of the same minute. A vendor with no probe fuses against an
     empty observation list and a None probe: `forecast_lapsed` then stays
     unreachable, which is the honest answer when nothing is watching.
+
+    Rows written, in the shape the notifier's own tests hand it
+    (tests/test_subscriptions.py, StageAwareNotifierTests) with the key stated
+    rather than left to be derived from a `slot` the feed does not carry:
+      - the announcement that claims a pair carries `merged_from` = the pair's
+        probe key, so subscriptions.plan_adoptions renames a probe-first
+        incident already mailed instead of mailing the post as a second one;
+      - every observation row of a claimed pair carries the announcement's
+        `incident_key` and no `status`: it never mails on its own;
+      - an unclaimed pair's rows carry its probe key, `origin`, `kind`, the
+        account labels and both clears, and the earliest row alone carries
+        the `status` (one incident, one mailable row);
+      - a pair since withdrawn is one extra row with `status: retracted`, no
+        verdict and no sentence, so the page draws nothing and the notifier
+        can still correct what it sent.
     """
     state = Path(state_dir) if state_dir else groundtruth.DEFAULT_STATE_DIR
     for key, vendor in vendors.items():
         events = vendor.get("events") or []
-        if not events:
-            continue
+        observations = vendor.get("observations") or []
         spec = groundtruth.PROBE_SPECS.get(key)
         if spec is None or not spec.exists():
             clears = []
@@ -842,16 +1041,116 @@ def fuse_incidents(vendors, state_dir=None, now=None):
                 print(f"skipping {key} fusion: {error}")
                 clears = []
         probe = vendor.get("probe")
-        for event in events:
-            event["status"] = incidents.derive_status(
-                event,
-                match_observation(event, clears),
-                probe if isinstance(probe, dict) else None,
-                now=now,
+        probe = probe if isinstance(probe, dict) else None
+        try:
+            broken = (
+                groundtruth.withdrawn_pair_clears(state, vendor=key)
+                if spec is not None and spec.exists()
+                else []
             )
+        except Exception as error:  # never take the publish down for fusion
+            print(f"skipping {key} withdrawn pairs: {error}")
+            broken = []
+        live, withdrawn = probe_groups(key, clears, broken)
+        claimed = {}
+        for event in events:
+            match = match_observation(event, clears)
+            trusted = incidents.is_trusted_announcement(event)
+            own = match
+            if (
+                not trusted
+                and match is not None
+                and not match["retracted"]
+                and match["verdict"] in incidents.ORIGINATING_VERDICTS
+            ):
+                # The pair is a probe-first incident below, keyed and mailed
+                # once. Letting an unverified post wear it as well would make
+                # one reset two incidents.
+                own = None
+            event["status"] = incidents.derive_status(event, own, probe, now=now)
             stable_id = str(event.get("id") or "").strip()
             if stable_id:
                 event["incident_key"] = f"{key}:{stable_id}"
+            if not (trusted and stable_id):
+                continue
+            # Every pair this post confirms is this post's reset, not only the
+            # nearest clear: a lone clear on another window can sit closer to
+            # the post than the pair does, and leaving the pair unclaimed
+            # would mail one reset twice. Events are in announcement order, so
+            # the earliest trusted post that confirms a pair claims it.
+            announced = event_epoch(event)
+            mine = [
+                incident
+                for incident, members in live
+                if incident not in claimed
+                and announced is not None
+                and any(
+                    abs(clear["t"] - announced) <= OBSERVED_MATCH_SECONDS
+                    and incidents.corroborates(event, clear["verdict"], iso_z(clear["t"]))
+                    for clear in members
+                )
+            ]
+            for incident in mine:
+                claimed[incident] = event["incident_key"]
+            if mine:
+                # One name is enough for the rename: the other pairs' rows
+                # carry this key too, and the notifier's store re-files them.
+                event["merged_from"] = mine[0]
+
+        rows = {
+            row["event_id"]: row
+            for row in observations
+            if isinstance(row, dict) and isinstance(row.get("event_id"), str)
+        }
+        for incident, members in live:
+            member_rows = [rows.get(published_id(clear["key"])) for clear in members]
+            if not any(member_rows):
+                # The export lags the log by at most a tick, and a pair whose
+                # rows are missing has nothing to show or quote yet. It is
+                # created on the next build, under the same key.
+                print(f"skipping {incident}: no exported row for it yet")
+                continue
+            if incident in claimed:
+                for row in member_rows:
+                    if row is not None:
+                        row["incident_key"] = claimed[incident]
+                        row["origin"] = incidents.ORIGIN_PROBE
+                continue
+            status = incidents.derive_status(
+                None,
+                {
+                    "verdict": groundtruth.VERDICT_VENDOR,
+                    # The LATER clear starts the hold: the pair is not a pair
+                    # until its second half exists.
+                    "observed_at": iso_z(max(clear["t"] for clear in members)),
+                    "witness": members[0].get("witness"),
+                },
+                probe,
+                now=now,
+            )
+            if status == incidents.STATUS_OBSERVED_SINGLE:
+                # Never shown, never mailed. Unreachable with a witness, and
+                # kept unreachable by not writing it anywhere.
+                continue
+            fields = _incident_fields(incident, members)
+            for row in member_rows:
+                if row is not None:
+                    row.update(fields)
+            next(row for row in member_rows if row is not None)["status"] = status
+
+        for incident, members in withdrawn:
+            first = members[0]
+            vendor.setdefault("observations", []).append({
+                **_incident_fields(incident, members),
+                "event_id": published_id(first["key"]),
+                "status": incidents.STATUS_RETRACTED,
+                "verdict": None,
+                "observed_at": iso_z(first["t"]),
+                "observed_before": iso_z(first["clear_bracket_lo"])
+                if isinstance(first.get("clear_bracket_lo"), int)
+                else None,
+                "window": groundtruth.window_name(first.get("window_minutes")),
+            })
 
 
 def main():

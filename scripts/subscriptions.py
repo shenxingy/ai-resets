@@ -41,13 +41,18 @@ from scripts.groundtruth import (  # noqa: E402
     PROBE_STALE_SECONDS,
     ground_truth_line,
     load_probe_health,
+    probe_first_line,
     probe_status,
     stale_age_line,
 )
 from scripts.incidents import (  # noqa: E402
+    ORIGIN_ANNOUNCEMENT,
+    ORIGIN_PROBE,
     describe_event,
+    event_origin,
     landed_subject,
     paragraphs,
+    probe_incident_key,
 )
 from scripts.timefmt import (  # noqa: E402
     describe_age,
@@ -278,8 +283,8 @@ STAGE_LABELS = {
     STAGE_RETRACTED: "Tell me when we withdraw one of our own observations",
 }
 
-ORIGIN_ANNOUNCEMENT = "announcement"
-ORIGIN_PROBE = "probe"
+# ORIGIN_ANNOUNCEMENT / ORIGIN_PROBE and event_origin() live in
+# scripts/incidents.py, which writes the subject line from the same answer.
 
 # What the `new` mail left open, recorded on the delivery when it is sent. A
 # follow-up is decided from what the subscriber actually read, not from what
@@ -337,21 +342,6 @@ FOLLOW_UP_LEAD = {
 }
 
 
-def event_origin(event: dict[str, Any]) -> str:
-    """Who saw this: our own probe, or a vendor announcement.
-
-    An explicit `origin` wins. Otherwise a row carrying `observed_at` and no
-    `announced_at` is a probe row — that is the exported observation's shape
-    (scripts/quota_probe.observation) and no announcement has ever had it.
-    """
-    declared = str(event.get("origin") or "").strip().lower()
-    if declared in (ORIGIN_ANNOUNCEMENT, ORIGIN_PROBE):
-        return declared
-    if event.get("observed_at") and not event.get("announced_at"):
-        return ORIGIN_PROBE
-    return ORIGIN_ANNOUNCEMENT
-
-
 def _epoch(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -380,13 +370,12 @@ def incident_key(event: dict[str, Any]) -> str:
         return stated
     vendor = str(event.get("vendor", ""))
     if event_origin(event) == ORIGIN_PROBE:
-        slot = str(event.get("slot") or event.get("window") or "window")
         low = _epoch(
             event.get("observed_before")
             or event.get("clear_bracket_lo")
             or event.get("observed_at")
         )
-        return f"{vendor}:probe-{slot}-{'unbracketed' if low is None else low}"
+        return probe_incident_key(vendor, event.get("slot") or event.get("window"), low)
     stable_id = str(event.get("id") or event.get("event_id") or "")
     if not stable_id:
         stable_id = hashlib.sha256(
@@ -1839,13 +1828,8 @@ class SubscriptionApp:
         reading = describe_event(event)
         subject = reading["subject"]
         if ground_truth is None:
-            ground_truth = ground_truth_line(
-                reading["vendor"],
-                is_forecast=reading["is_forecast"],
-                now=now_ts() if now is None else now,
-                state_dir=self.config.state_dir,
-                kind=reading["kind"],
-                announced_at=event_time(event),
+            ground_truth = ground_truth_for(
+                self.config, event, now_ts() if now is None else now
             )
 
         if ground_truth.get("landed"):
@@ -1885,15 +1869,22 @@ class SubscriptionApp:
         method_url = f"{self.config.public_url}/methodology.html"
 
         announcer = str(event.get("announcer") or "").strip()
-        when = reading["announced_at"]
+        probe_first = reading["origin"] == ORIGIN_PROBE
+        when = event.get("observed_at") if probe_first else reading["announced_at"]
         try:
             posted = format_pacific_with_utc(str(when)) if when else ""
         except (ValueError, TypeError):
             posted = str(when or "")
-        meta_parts = [f"Posted by @{announcer.lstrip('@')}"] if announcer else ["Posted"]
+        if probe_first:
+            # Nobody posted this. The meta line says who saw it instead of
+            # printing a bare "Posted" over a post that does not exist.
+            meta_parts = ["Seen on our own accounts"]
+        else:
+            meta_parts = [f"Posted by @{announcer.lstrip('@')}"] if announcer else ["Posted"]
         if posted:
             meta_parts.append(posted)
         meta = " · ".join(meta_parts)
+        button = "See it on the tracker" if probe_first else "View the original post"
 
         quoted = paragraphs(reading["text"])
         if not quoted and event_origin(event) == ORIGIN_PROBE:
@@ -1943,7 +1934,7 @@ class SubscriptionApp:
                 + f'<p class="muted">{html.escape(meta)}</p>'
                 f"<blockquote>{quote_html}</blockquote>"
                 f'<p><a class="button" href="{html.escape(source_url, quote=True)}">'
-                f"View the original post</a></p>"
+                f"{html.escape(button)}</a></p>"
                 f'<p class="ground"><strong>{html.escape(gt_label)}.</strong> '
                 f"{html.escape(gt_line)}</p>"
                 f'<p class="muted">AI Reset Watch checks announcements against a '
@@ -1966,7 +1957,7 @@ class SubscriptionApp:
                 "",
                 f"{gt_label}: {gt_line}",
                 "",
-                f"Original post: {source_url}",
+                f"{'Tracker' if probe_first else 'Original post'}: {source_url}",
                 f"How we verify resets: {method_url}",
                 "",
                 f"Manage providers: {preferences_url}",
@@ -2144,8 +2135,15 @@ def health_conditions(
 def ground_truth_for(
     config: Config, event: dict[str, Any], now: int
 ) -> dict[str, Any]:
-    """The one sentence about our own accounts for this event, at this instant."""
+    """The one sentence about our own accounts for this event, at this instant.
+
+    A probe-first incident has no post to measure against: its block describes
+    the clears that started it, and is always `observed`, so its mail settles
+    its own claim and a later post about the same reset sends nothing more.
+    """
     reading = describe_event(event)
+    if reading["origin"] == ORIGIN_PROBE:
+        return probe_first_line(event, state_dir=config.state_dir)
     return ground_truth_line(
         reading["vendor"],
         is_forecast=reading["is_forecast"],
@@ -2153,6 +2151,7 @@ def ground_truth_for(
         state_dir=config.state_dir,
         kind=reading["kind"],
         announced_at=event_time(event),
+        trusted=reading["trusted"],
     )
 
 
@@ -2406,7 +2405,12 @@ def run_notifier(
         reading = describe_event(event)
         announced = event_time(event)
         stage = row["stage"]
-        cache_key = f"{reading['vendor']}:{reading['kind']}:{reading['is_forecast']}:{announced}"
+        # Everything ground_truth_for reads off the event: two incidents that
+        # differ only in origin or trust must not share one sentence.
+        cache_key = (
+            f"{reading['vendor']}:{reading['kind']}:{reading['is_forecast']}:{announced}:"
+            f"{reading['origin']}:{reading['trusted']}:{row['incident_key']}"
+        )
         if cache_key not in truths:
             truths[cache_key] = ground_truth_for(config, event, now)
         truth = truths[cache_key]

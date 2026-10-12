@@ -45,8 +45,9 @@ not a hypothetical: it is why the probes exist.
 
 So `quota_probe.py` (OpenAI) and `claude_probe.py` (Anthropic) read the
 operator's own authenticated quota — metadata only, consuming no tokens and no
-reset credit — and time account clears directly. They are **observation-only and never
-send mail**.
+reset credit — and time account clears directly. The probes are
+**observation-only and never send mail** themselves; the notifier mails a
+probe-first reset only when two of our accounts saw it (see the verdicts below).
 
 Three measured facts drive the detection logic:
 
@@ -62,8 +63,11 @@ Three measured facts drive the detection logic:
    vendor action. OpenAI's Bank count is a balance, not a redemption history:
    grants, spending and expiry can overlap between polls. Claude's personal
    limit resets can restore weekly limits too, and its usage response does not
-   expose a redemption ledger. Neither an unchanged Bank count nor two accounts
-   clearing together proves a provider-wide reset.
+   expose a redemption ledger. One account can only rule out the own-causes it
+   can see, so an early clear is the vendor's only with a second witness: a
+   second account of ours clearing the same window within the hour, or a
+   trusted reset post within minutes
+   ([docs/reset-attribution.md](docs/reset-attribution.md)).
 
 A clear must persist across two polls before it is trusted: on one occasion a
 weekly window went 91% to 0% in 3.7 s, held for 12 h 41 m, and then reverted
@@ -81,14 +85,22 @@ Confirmation across polls proves that a clear persisted, not who caused it.
 | Verdict | Meaning | Published |
 |---|---|---|
 | `natural_expiry` | Cleared at or after the scheduled expiry | yes |
-| `unresolved` | Cleared early with an unverified cause, or no expiry anchor | **no** |
-| `self_applied` | Bank count fell across the clear; possible personal reset use | **no** |
+| `vendor_reset` | Two of our accounts (different fingerprints) cleared the same window early within an hour, each `unattributed`, not both at 95% or more | yes, with its witness |
+| `unattributed` | Cleared early with every own-cause the probe can see checked and excluded | **no** |
+| `unresolved` | Cleared early with a check that could not run, or no expiry anchor | **no** |
+| `self_applied` | A banked credit left within the lookback (Codex), or the Claude Code reset menu was opened in the hour before (Claude); possible personal reset use | **no** |
+| `account_change` | The account or plan differs across the clear; not a reset | **no** |
 
 Legacy `global_candidate` records now export as `unresolved`, so historical
-logs cannot bypass this rule. The raw-log reader used by announcement and
-email annotations shares the exporters' verdict map. Account-only clears
-never mark an announcement confirmed, originate a public reset, or enter
-public reset counts. Private samples and event logs are retained for review.
+logs cannot bypass this rule; they carry no account fingerprint, so they can
+never become `vendor_reset` either. Both exporters and the raw-log reader
+behind announcement and email annotations decide `vendor_reset` in one place,
+`scripts/attribution.py`. A single account's `unattributed` clear never
+originates an incident or a public row: it can only mark a trusted
+retrospective reset post confirmed, and only when the post lands between one
+hour before and three hours after the clear. A `vendor_reset` pair with no
+trusted post becomes one probe-first incident, mailed once after a 120-minute
+hold. Private samples and event logs are retained for review.
 
 A Bank credit grant is a separate event from a quota clear. Timing a grant
 near an official announcement is only a timing match, not proof of causation
@@ -110,6 +122,7 @@ scripts/
   quota_probe.py      ground truth: this account's own Codex quota
   claude_probe.py     ground truth: this account's own Claude quota
   antigravity_probe.py  ground truth for Google (needs one interactive login)
+  attribution.py      the two-account rule: when a clear is the vendor's
   groundtruth.py      joins observations to announcements
   incidents.py        classifies an announcement (reset / banked / policy)
   build.py            data feed + crawlable HTML and schema snapshots

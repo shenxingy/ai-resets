@@ -6,11 +6,18 @@ was caused by treating all of them alike.
 """
 
 import unittest
+from unittest import mock
 
 from datetime import datetime, timedelta, timezone
 
 from scripts.groundtruth import STATUS_OK
 from scripts.incidents import (
+    SINGLE_ACCOUNT_CLEAR_AFTER_POST_SECONDS,
+    SINGLE_ACCOUNT_CLEAR_BEFORE_POST_SECONDS,
+    corroborates,
+    corroborates_at,
+    event_origin,
+    probe_incident_key,
     scope_covers_us,
     INCIDENT_STATUSES,
     KIND_BANKED,
@@ -119,6 +126,44 @@ class ClassifyTextTests(unittest.TestCase):
         self.assertEqual(classify_text(MIXED_TENSE), STAGE_RETROSPECTIVE)
         self.assertEqual(classify_text(MIXED_TENSE_2), STAGE_RETROSPECTIVE)
 
+    def test_the_staffs_rollout_phrasing_is_a_reset_that_happened(self):
+        # Exact strings from data/openai.json. Each one is also the second
+        # witness a probe-first clear can use, so the stage alone is not
+        # enough: the pattern itself has to see a completed reset.
+        for text in (
+            "Reset all propagated.",
+            "Resets all propagated. That will be all.",
+            "Put the reset in the bag. All propagated.",
+            "the reset has been processed",
+            "Reset all propagated. Sweet dreams.",
+            # Each half of the 10-11 post must stand on its own.
+            "Put the reset in the bag.",
+            "All propagated.",
+            "Good Sunday. Reset has been propagated to accounts and we landed some "
+            "fixes to usage for things mentioned yesterday as issues we found. More "
+            "to come tomorrow and will keep communicating.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(classify_text(text), STAGE_RETROSPECTIVE)
+                self.assertTrue(is_explicit_reset_witness(announcement(text=text)))
+
+    def test_the_will_in_that_will_be_all_does_not_make_it_a_forecast(self):
+        # 2026-09-26 was forecast_lapsed for two weeks on exactly this "will".
+        self.assertEqual(
+            classify_text("Resets all propagated. That will be all. Have a fantastic weekend."),
+            STAGE_RETROSPECTIVE,
+        )
+
+    def test_a_rollout_still_to_come_stays_a_forecast(self):
+        for text in (
+            "The reset will be propagated over the next hour.",
+            "It will be all propagated within the hour.",
+            "Resets will be propagated shortly.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(classify_text(text), STAGE_FORECAST)
+                self.assertFalse(is_explicit_reset_witness(announcement(text=text)))
+
     def test_a_post_with_no_tense_marker_is_treated_as_already_done(self):
         # The feed already decided this is a reset; with no future language the
         # safe reading is that it has happened, not that it is pending.
@@ -195,7 +240,7 @@ class DescribeEventTests(unittest.TestCase):
         )
         self.assertEqual(reading["subject"], "Claude Code: usage limits reset")
         self.assertEqual(reading["org"], "Anthropic")
-        self.assertFalse(reading["probed"])  # no Claude probe exists yet
+        self.assertTrue(reading["probed"])  # two Claude accounts are probed
 
     def test_the_quoted_text_keeps_paragraphs_and_drops_the_shortener(self):
         reading = describe_event(
@@ -283,7 +328,7 @@ class ScopeTests(unittest.TestCase):
         # Without this the site says "announced, not observed on our accounts",
         # which reads as evidence the vendor over-claimed. It is not evidence of
         # anything: the reset was never aimed at a plan we hold.
-        for scope in ("Plus and Business", "Team", "seat-based Enterprise", "free tier"):
+        for scope in ("Plus and Business", "seat-based Enterprise", "free tier"):
             with self.subTest(scope=scope):
                 self.assertFalse(scope_covers_us(scope))
 
@@ -291,6 +336,14 @@ class ScopeTests(unittest.TestCase):
         for scope in ("about 3% of users", "affected users", "some users", "a subset of accounts"):
             with self.subTest(scope=scope):
                 self.assertFalse(scope_covers_us(scope))
+
+    def test_team_is_ours_since_account_a_moved_to_a_team_org(self):
+        # 2026-10-11 21:03 UTC: Claude account a logged in to a Team org. A
+        # Team-scoped reset is now one our probe could see, and calling it
+        # out of scope would excuse a claim we can check.
+        for scope in ("Team", "every Team seat", "Team and Enterprise"):
+            with self.subTest(scope=scope):
+                self.assertTrue(scope_covers_us(scope))
 
     def test_a_plan_of_ours_inside_a_longer_list_still_counts(self):
         self.assertTrue(scope_covers_us("all Plus, Pro and Business users"))
@@ -623,6 +676,183 @@ class DeriveStatusTests(unittest.TestCase):
         self.assertEqual(derive_status(None, None, None, now="not a time"), STATUS_CANDIDATE)
 
 
+class SingleAccountConfirmationTests(unittest.TestCase):
+    """docs/reset-attribution.md, "An announcement": one account, a tight window."""
+
+    POST = "2026-09-04T20:08:45Z"
+
+    def at(self, seconds_after_post, **event):
+        moment = datetime(2026, 9, 4, 20, 8, 45, tzinfo=timezone.utc) + timedelta(
+            seconds=seconds_after_post
+        )
+        return corroborates(announcement(**event), "unattributed", moment.isoformat())
+
+    def test_the_window_is_three_hours_before_to_one_hour_after_the_post(self):
+        self.assertEqual(SINGLE_ACCOUNT_CLEAR_BEFORE_POST_SECONDS, 3 * 3600)
+        self.assertEqual(SINGLE_ACCOUNT_CLEAR_AFTER_POST_SECONDS, 3600)
+        for offset, confirms in (
+            (-3 * 3600, True),
+            (-3 * 3600 - 1, False),
+            (-120, True),  # 2026-10-11: our clear, then the post 2 min later
+            (3600, True),
+            (3601, False),
+        ):
+            with self.subTest(offset=offset):
+                self.assertEqual(self.at(offset), confirms)
+
+    def test_a_two_account_witness_keeps_the_wider_window(self):
+        moment = "2026-09-04T15:08:45+00:00"  # five hours before the post
+        self.assertTrue(corroborates(announcement(), "vendor_reset", moment))
+        self.assertFalse(corroborates(announcement(), "unattributed", moment))
+
+    def test_one_account_needs_a_trusted_retrospective_reset_post(self):
+        for edit in (
+            {"text_verified": False},
+            {"announcer": "a_random_dev"},
+            {"post_is_reply": True},
+            {"text": "We will reset limits later today."},
+            {"kind": "boost"},
+            {"kind": "", "upstream_reset_type": ""},
+            {"upstream_reset_type": "banked"},
+        ):
+            with self.subTest(edit=edit):
+                self.assertFalse(self.at(-120, **edit))
+
+    def test_the_plain_rule_says_the_same_on_plain_values(self):
+        self.assertTrue(corroborates_at(KIND_RESET, STAGE_RETROSPECTIVE, "unattributed", -120, trusted=True))
+        self.assertFalse(corroborates_at(KIND_RESET, STAGE_RETROSPECTIVE, "unattributed", -120, trusted=False))
+        self.assertFalse(corroborates_at(KIND_UNKNOWN, STAGE_RETROSPECTIVE, "unattributed", -120, trusted=True))
+        self.assertFalse(corroborates_at(KIND_RESET, STAGE_FORECAST, "unattributed", 120, trusted=True))
+        # A forecast still has no upper bound for two accounts.
+        self.assertTrue(corroborates_at(KIND_RESET, STAGE_FORECAST, "vendor_reset", 20 * 3600, trusted=False))
+        for verdict in ("unresolved", "self_applied", "natural_expiry", "account_change", None, ""):
+            with self.subTest(verdict=verdict):
+                self.assertFalse(corroborates_at(KIND_RESET, STAGE_RETROSPECTIVE, verdict, 0, trusted=True))
+
+    def test_no_kind_but_a_reset_lists_a_single_account_as_confirmation(self):
+        from scripts.incidents import CONFIRMING_VERDICTS
+        for kind, verdicts in CONFIRMING_VERDICTS.items():
+            with self.subTest(kind=kind):
+                self.assertEqual("unattributed" in verdicts, kind == KIND_RESET)
+
+    def test_the_rule_holds_even_if_the_table_is_widened(self):
+        # The second lock: corroborates_at itself requires a reset, so an
+        # edit that lists `unattributed` under another kind still confirms
+        # nothing a single account should not.
+        from scripts import incidents
+        widened = {kind: verdicts + ("unattributed",)
+                   for kind, verdicts in incidents.CONFIRMING_VERDICTS.items()}
+        with mock.patch.dict(incidents.CONFIRMING_VERDICTS, widened):
+            for kind in (KIND_UNKNOWN, KIND_BANKED, KIND_POLICY):
+                with self.subTest(kind=kind):
+                    self.assertFalse(corroborates_at(
+                        kind, STAGE_RETROSPECTIVE, "unattributed", -120, trusted=True
+                    ))
+
+    def test_unusable_times_confirm_nothing(self):
+        self.assertFalse(corroborates(announcement(announced_at="soon"), "unattributed", self.POST))
+        self.assertFalse(corroborates(announcement(), "unattributed", None))
+        self.assertFalse(corroborates(None, "vendor_reset", self.POST))
+
+    def test_derive_status_confirms_with_one_account_only_inside_the_window(self):
+        near = observation(verdict="unattributed", observed_at="2026-09-04T20:06:45Z")
+        far = observation(verdict="unattributed", observed_at="2026-09-04T16:00:00Z")
+        self.assertEqual(derive_status(announcement(), near, OK_PROBE, now=NOW), STATUS_CONFIRMED)
+        self.assertEqual(derive_status(announcement(), far, OK_PROBE, now=NOW), STATUS_ANNOUNCED)
+
+    def test_an_unlabelled_post_never_takes_one_accounts_word(self):
+        unlabelled = announcement(kind="")
+        self.assertEqual(event_kind(unlabelled), KIND_UNKNOWN)
+        near = observation(verdict="unattributed", observed_at="2026-09-04T20:06:45Z")
+        self.assertNotEqual(derive_status(unlabelled, near, OK_PROBE, now=NOW), STATUS_CONFIRMED)
+        self.assertEqual(
+            derive_status(unlabelled, observation(), OK_PROBE, now=NOW), STATUS_CONFIRMED
+        )
+
+    def test_one_account_never_starts_an_incident(self):
+        lone = observation(verdict="unattributed")
+        for now in (NOW, "2026-09-05T20:00:00Z"):
+            with self.subTest(now=now):
+                self.assertEqual(derive_status(None, lone, OK_PROBE, now=now), STATUS_CANDIDATE)
+
+
+class ProbeFirstWitnessTests(unittest.TestCase):
+    """A vendor_reset names the second account; that is its witness."""
+
+    def test_the_second_account_is_the_witness_after_the_hold(self):
+        paired = observation(witness="obs-b")
+        self.assertEqual(derive_status(None, paired, OK_PROBE, now=NOW), STATUS_OBSERVED_PENDING)
+        self.assertEqual(
+            derive_status(None, paired, OK_PROBE, now="2026-09-04T22:11:00Z"), STATUS_OBSERVED
+        )
+
+    def test_without_a_witness_the_old_rule_applies(self):
+        for witness in (None, "", "   ", 3):
+            with self.subTest(witness=witness):
+                lone = observation(witness=witness)
+                self.assertEqual(
+                    derive_status(None, lone, OK_PROBE, now="2026-09-04T22:11:00Z"),
+                    STATUS_OBSERVED_SINGLE,
+                )
+        verified = announcement(announcer="a_random_dev", text="Reset all propagated.")
+        self.assertEqual(
+            derive_status(verified, observation(), OK_PROBE, now="2026-09-04T22:11:00Z"),
+            STATUS_OBSERVED,
+        )
+
+    def test_the_key_is_the_one_production_already_filed(self):
+        # 16 rows in the live known_events table read exactly like this.
+        self.assertEqual(
+            probe_incident_key("openai", "weekly", 1788136976), "openai:probe-weekly-1788136976"
+        )
+        self.assertEqual(probe_incident_key("anthropic", "", None), "anthropic:probe-window-unbracketed")
+        self.assertEqual(probe_incident_key("openai", "weekly", True), "openai:probe-weekly-unbracketed")
+
+
+class ProbeFirstCopyTests(unittest.TestCase):
+    """No post exists, so no line may say one does."""
+
+    ROW = {
+        "vendor": "anthropic", "origin": "probe", "kind": "reset", "window": "weekly",
+        "accounts": ["a", "b"], "observed_at": "2026-10-11T04:00:00Z", "text": "",
+    }
+
+    def test_the_subject_says_two_of_our_accounts_and_not_yet_announced(self):
+        reading = describe_event(self.ROW)
+        self.assertEqual(
+            reading["subject"],
+            "Claude Code: weekly limits reset on two of our accounts — not announced yet",
+        )
+        self.assertEqual(
+            reading["headline"],
+            "Claude Code: weekly limits reset on two of our accounts, and nobody has "
+            "announced it yet.",
+        )
+        self.assertEqual(
+            reading["eyebrow"], "Anthropic / Claude Code · Reset · Seen on our accounts"
+        )
+        self.assertEqual(reading["origin"], "probe")
+        self.assertFalse(reading["is_forecast"])
+        for said in (reading["subject"], reading["headline"], reading["eyebrow"]):
+            self.assertNotIn("posted", said)
+            self.assertNotIn("Announced", said)
+
+    def test_every_word_comes_from_a_field_with_a_closed_vocabulary(self):
+        hostile = dict(self.ROW, window="<b>weekly</b>", accounts=["a", "a", None, 3])
+        reading = describe_event(hostile)
+        self.assertEqual(
+            reading["subject"], "Claude Code: usage limits reset on our account — not announced yet"
+        )
+        three = describe_event(dict(self.ROW, accounts=["a", "b", "c"], window="5-hour"))
+        self.assertIn("5-hour limits reset on three of our accounts", three["subject"])
+
+    def test_the_origin_is_read_from_the_shape_when_not_declared(self):
+        self.assertEqual(event_origin({"observed_at": "x"}), "probe")
+        self.assertEqual(event_origin({"observed_at": "x", "announced_at": "y"}), "announcement")
+        self.assertEqual(event_origin({"origin": "PROBE "}), "probe")
+        self.assertEqual(describe_event(announcement())["origin"], "announcement")
+
+
 class DescribeEventFieldsTests(unittest.TestCase):
     """P1 additions to describe_event. Every pre-existing key is unchanged."""
 
@@ -649,7 +879,10 @@ class DescribeEventFieldsTests(unittest.TestCase):
         self.assertEqual(reading["headline"], "Claude Code: usage limits were reset.")
         self.assertEqual(reading["kind"], KIND_RESET)
         self.assertEqual(reading["stage"], STAGE_RETROSPECTIVE)
-        self.assertFalse(reading["probed"])
+        # Claude Code is probed on two accounts, so a "not observed" in its
+        # mail is a claim a later observation can settle.
+        self.assertTrue(reading["probed"])
+        self.assertFalse(describe_event(announcement(vendor="google"))["probed"])
 
 
 
@@ -664,7 +897,7 @@ class ScopeOrderingTests(unittest.TestCase):
         # "all Plus users" is not about a Pro/Max account. Treating it as ours
         # produced "not observed on our accounts", which reads as evidence the
         # vendor over-claimed, from a post that never mentioned our tier.
-        for scope in ("all Plus users", "all Business users", "every Team seat"):
+        for scope in ("all Plus users", "all Business users", "every Enterprise seat"):
             with self.subTest(scope=scope):
                 self.assertFalse(scope_covers_us(scope))
 

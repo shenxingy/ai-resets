@@ -51,10 +51,12 @@ VENDOR_PRODUCT = {
     "google": "Gemini",
 }
 
-# The only vendor with a running ground-truth probe. The Claude probe is P2 and
-# Antigravity is P6; until they exist the email must say so rather than imply
-# that silence means nothing happened.
-PROBED_VENDORS = ("openai",)
+# Vendors with a running ground-truth probe: Codex, and Claude Code on two
+# accounts. Leaving Claude out marked every Claude mail's claim CLAIM_NONE, so
+# a reset our accounts later saw could never send its one confirmation.
+# Antigravity (P6) has no probe; until it does the email must say so rather
+# than imply that silence means nothing happened.
+PROBED_VENDORS = ("openai", "anthropic")
 
 
 def vendor_org(vendor: str) -> str:
@@ -74,11 +76,24 @@ def vendor_label(vendor: str) -> str:
 # "We have reset", "we've reset", "we are reseting" (their spelling), "we have
 # now reset", "we just reset". The optional adverb slot is deliberately narrow:
 # widening it to "any word" would swallow "we will do the full banked reset".
+#
+# The staff account that announces most Codex resets stopped writing "we have
+# reset" in August and now writes the done-ness of the ROLLOUT instead. Four
+# real posts the old pattern read as no tense at all, or as a forecast because
+# a later sentence carried "will": "Reset has been propagated to accounts ...
+# will keep communicating" (2026-08-24), "Reset all propagated." (09-12,
+# 10-02), "Resets all propagated. That will be all." (09-26, which sat as
+# forecast_lapsed) and "Put the reset in the bag. All propagated." (10-11).
+# "All propagated" is only read at the start of a sentence, so "it will be all
+# propagated within the hour" stays a forecast.
 RETROSPECTIVE_RE = re.compile(
     r"\bwe(?:'ve|’ve|\s+have|\s+are|\s+just)?\s+(?:now\s+|just\s+|also\s+)*"
     r"reset(?:ting|ing|ed)?\b"
     r"|\b(?:have|has|had|were|was)\s+(?:now\s+|just\s+)?(?:been\s+)?reset\b"
-    r"|\breset\s+(?:has|have)\s+landed\b",
+    r"|\bresets?\s+(?:has|have)\s+(?:now\s+|just\s+)?(?:been\s+)?(?:landed|processed)\b"
+    r"|\bresets?\s+(?:has\s+|have\s+)?(?:all\s+)?(?:been\s+)?propagated\b"
+    r"|(?:^|[.!?]\s+)all\s+propagated\b"
+    r"|\bresets?\s+in\s+the\s+bag\b",
     re.IGNORECASE,
 )
 
@@ -190,6 +205,20 @@ _SUBJECTS = {
     (KIND_UNKNOWN, STAGE_FORECAST): "{product}: usage limits update announced",
 }
 
+# A probe-first incident has no post, so none of the (kind, stage) copy above
+# fits it: "the vendor posted a usage-limits update" is exactly what did not
+# happen. Its subject, headline and eyebrow are looked up from the row's own
+# window name and account count instead — still fields, never free text.
+ORIGIN_ANNOUNCEMENT = "announcement"
+ORIGIN_PROBE = "probe"
+_PROBE_SUBJECT = "{product}: {window} limits reset on {accounts} — not announced yet"
+_PROBE_HEADLINE = "{product}: {window} limits reset on {accounts}, and nobody has announced it yet."
+_PROBE_STAGE_WORD = "Seen on our accounts"
+# The window names an exporter writes (quota_probe.WINDOW_NAMES). Anything
+# else reads as "usage" rather than being printed into a subject line.
+_PROBE_WINDOWS = frozenset({"weekly", "daily", "5-hour"})
+_COUNT_WORDS = {2: "two", 3: "three", 4: "four"}
+
 _KIND_WORDS = {
     KIND_RESET: "Reset",
     KIND_BANKED: "Banked credit",
@@ -200,6 +229,34 @@ _STAGE_WORDS = {
     STAGE_RETROSPECTIVE: "Announced",
     STAGE_FORECAST: "Forecast",
 }
+
+
+def event_origin(event: dict[str, Any]) -> str:
+    """Who saw this: our own probe, or a vendor announcement.
+
+    An explicit `origin` wins. Otherwise a row carrying `observed_at` and no
+    `announced_at` is a probe row — that is the exported observation's shape
+    (scripts/quota_probe.observation) and no announcement has ever had it.
+    """
+    declared = str(event.get("origin") or "").strip().lower()
+    if declared in (ORIGIN_ANNOUNCEMENT, ORIGIN_PROBE):
+        return declared
+    if event.get("observed_at") and not event.get("announced_at"):
+        return ORIGIN_PROBE
+    return ORIGIN_ANNOUNCEMENT
+
+
+def probe_accounts_phrase(event: dict[str, Any]) -> str:
+    """`two of our accounts`, from the labels the fusion layer stamped."""
+    labels = event.get("accounts")
+    count = (
+        len({label for label in labels if isinstance(label, str) and label})
+        if isinstance(labels, list)
+        else 0
+    )
+    if count >= 2:
+        return f"{_COUNT_WORDS.get(count, str(count))} of our accounts"
+    return "our account"
 
 
 def describe_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -222,6 +279,23 @@ def describe_event(event: dict[str, Any]) -> dict[str, Any]:
         event.get("url")
     )
     scope = str(event.get("scope") or "")
+    origin = event_origin(event)
+    subject = _SUBJECTS[(kind, stage)].format(product=product)
+    headline = _HEADLINES[(kind, stage)].format(product=product)
+    eyebrow = " · ".join((vendor_label(vendor), _KIND_WORDS[kind], _STAGE_WORDS[stage]))
+    if origin == ORIGIN_PROBE:
+        # Only a vendor_reset can originate an incident, so this is a reset,
+        # it already happened, and the people who saw it were our accounts.
+        kind, stage = KIND_RESET, STAGE_RETROSPECTIVE
+        window = str(event.get("window") or "")
+        fields = {
+            "product": product,
+            "window": window if window in _PROBE_WINDOWS else "usage",
+            "accounts": probe_accounts_phrase(event),
+        }
+        subject = _PROBE_SUBJECT.format(**fields)
+        headline = _PROBE_HEADLINE.format(**fields)
+        eyebrow = " · ".join((vendor_label(vendor), _KIND_WORDS[kind], _PROBE_STAGE_WORD))
     return {
         "vendor": vendor,
         "org": vendor_org(vendor),
@@ -229,11 +303,10 @@ def describe_event(event: dict[str, Any]) -> dict[str, Any]:
         "kind": kind,
         "stage": stage,
         "is_forecast": stage == STAGE_FORECAST,
-        "subject": _SUBJECTS[(kind, stage)].format(product=product),
-        "headline": _HEADLINES[(kind, stage)].format(product=product),
-        "eyebrow": " · ".join(
-            (vendor_label(vendor), _KIND_WORDS[kind], _STAGE_WORDS[stage])
-        ),
+        "subject": subject,
+        "headline": headline,
+        "eyebrow": eyebrow,
+        "origin": origin,
         "announced_at": event.get("announced_at"),
         "text": strip_tracking_urls(str(event.get("text", ""))),
         "url": event.get("url"),
@@ -363,9 +436,9 @@ def is_reviewed_announcer(handle: Any) -> bool:
 # never aimed at a plan we hold. Both scope strings below are real
 # claude-resets.com rows ("affected users", 2067802163498352929).
 
-# What the probed accounts actually hold. Two Max 20x accounts on one operator
-# machine for Claude; the Codex probe's account carries Pro.
-OUR_PLANS = frozenset({"max", "pro"})
+# What the probed accounts actually hold. Claude: account b on Max, and account
+# a on a Team org since its 2026-10-11 21:03 UTC login. Codex: Pro.
+OUR_PLANS = frozenset({"max", "pro", "team"})
 
 # Checked FIRST: a scope naming a fraction of the user base tells us nothing
 # about whether this account was in it, so it can never be read as "not seen".
@@ -382,9 +455,10 @@ UNIVERSAL_SCOPE_RE = re.compile(
     re.IGNORECASE,
 )
 # Plans nobody on this machine holds. Only consulted when no plan of ours is
-# named, so "all Plus, Pro and Business users" still covers us.
+# named, so "all Plus, Pro and Business users" still covers us. Team left this
+# list when account a moved to a Team org.
 OTHER_PLAN_RE = re.compile(
-    r"\b(?:plus|business|team|enterprise|free|edu|education|api)\b", re.IGNORECASE
+    r"\b(?:plus|business|enterprise|free|edu|education|api)\b", re.IGNORECASE
 )
 
 
@@ -446,16 +520,21 @@ INCIDENT_STATUSES = (
     STATUS_HISTORICAL,
 )
 
-# The probe's public verdicts (SHARED VOCABULARY). `self_applied` says what the
-# OWNER did with their own account and is never published, but it is named here
-# so a caller passing it gets the same "this is not vendor evidence" treatment
-# as a natural expiry rather than an unrecognised-string surprise.
+# The probe's verdicts (SHARED VOCABULARY). `self_applied` says what the OWNER
+# did with their own account and is never published, but it is named here so a
+# caller passing it gets the same "this is not vendor evidence" treatment as a
+# natural expiry rather than an unrecognised-string surprise. `unattributed`
+# (one account, every own-cause excluded) and `account_change` are private
+# too; `vendor_reset` is only ever produced by scripts/attribution.py, when a
+# second account of ours witnessed the clear.
 VERDICT_VENDOR_RESET = "vendor_reset"
 VERDICT_NATURAL_EXPIRY = "natural_expiry"
 VERDICT_SELF_APPLIED = "self_applied"
 VERDICT_UNRESOLVED = "unresolved"
 VERDICT_LIMIT_CHANGE = "limit_change"
 VERDICT_CREDIT_GRANTED = "credit_granted"
+VERDICT_UNATTRIBUTED = "unattributed"
+VERDICT_ACCOUNT_CHANGE = "account_change"
 
 OBSERVATION_VERDICTS = (
     VERDICT_NATURAL_EXPIRY,
@@ -464,6 +543,8 @@ OBSERVATION_VERDICTS = (
     VERDICT_UNRESOLVED,
     VERDICT_LIMIT_CHANGE,
     VERDICT_CREDIT_GRANTED,
+    VERDICT_UNATTRIBUTED,
+    VERDICT_ACCOUNT_CHANGE,
 )
 
 # Which own-account verdict corroborates which kind of announcement. This is
@@ -472,8 +553,15 @@ OBSERVATION_VERDICTS = (
 # "did the weekly window clear" said "not landed" while the same email quoted
 # "2 banked credits". A banked reset is confirmed by a credit, a reset by a
 # clear, a policy change by a rescale — never by each other.
+#
+# A reset is confirmed by a `vendor_reset` (two of our accounts) anywhere in the
+# +-6 h window, or by ONE account's `unattributed` clear inside the much
+# tighter single-account window below, and only for a post that says the reset
+# already happened (docs/reset-attribution.md, "An announcement"). An
+# unlabelled post never takes a single account's word: it claims nothing a
+# lone clear could be matched against.
 CONFIRMING_VERDICTS: dict[str, tuple[str, ...]] = {
-    KIND_RESET: (VERDICT_VENDOR_RESET,),
+    KIND_RESET: (VERDICT_VENDOR_RESET, VERDICT_UNATTRIBUTED),
     KIND_BANKED: (VERDICT_CREDIT_GRANTED,),
     KIND_POLICY: (VERDICT_LIMIT_CHANGE,),
     # An unlabelled post claims nothing, so any vendor-side verdict corroborates
@@ -492,6 +580,14 @@ ORIGINATING_VERDICTS = (VERDICT_VENDOR_RESET,)
 # posted it, so an observation slightly ahead of its announcement is the normal
 # case, not a mismatch.
 CONFIRM_WINDOW_SECONDS = 6 * 3600
+# One account's `unattributed` clear may confirm a retrospective reset post
+# only when (clear - post) lies in [-3 h, +1 h]: the post lands between one
+# hour before and three hours after the clear. Measured, a clear has led its
+# post by 23 s after (2026-09-12) to 79 min before (2026-09-26); an owner's own
+# paid reset can land at any hour, so the window is kept close to that range
+# instead of the +-6 h a two-account witness earns.
+SINGLE_ACCOUNT_CLEAR_BEFORE_POST_SECONDS = 3 * 3600
+SINGLE_ACCOUNT_CLEAR_AFTER_POST_SECONDS = 1 * 3600
 # A forecast with no stated deadline is watched for a day. The 2026-09-04
 # banked reset forecast "end of day" landed 3 h 41 min after the post.
 FORECAST_WINDOW_SECONDS = 24 * 3600
@@ -568,6 +664,80 @@ def is_explicit_reset_witness(event: Any) -> bool:
     return bool(RETROSPECTIVE_RE.search(str(event.get("text") or "")))
 
 
+def corroborates_at(
+    kind: Any, stage: Any, verdict: Any, seconds_after_post: float, *, trusted: bool
+) -> bool:
+    """The confirmation rule on plain values: `seconds_after_post` is clear - post.
+
+    The one place the confirmation windows live. derive_status, the build's
+    annotation and fusion, and the email's ground-truth line all reach it, so
+    the site, the lifecycle and the mail cannot disagree. A forecast has no
+    upper bound for a two-account or credit verdict ("later" is exactly when
+    the probe should see it). A single account's clear needs everything the
+    contract names: a TRUSTED post, of kind reset, saying the reset already
+    happened, inside the tight window — it never confirms a forecast, a
+    curated tracker's row or an unlabelled post.
+    """
+    if verdict not in CONFIRMING_VERDICTS.get(kind, ()):
+        return False
+    if verdict == VERDICT_UNATTRIBUTED:
+        return (
+            trusted
+            and kind == KIND_RESET
+            and stage == STAGE_RETROSPECTIVE
+            and -SINGLE_ACCOUNT_CLEAR_BEFORE_POST_SECONDS
+            <= seconds_after_post
+            <= SINGLE_ACCOUNT_CLEAR_AFTER_POST_SECONDS
+        )
+    return seconds_after_post >= -CONFIRM_WINDOW_SECONDS and (
+        stage == STAGE_FORECAST or seconds_after_post <= CONFIRM_WINDOW_SECONDS
+    )
+
+
+def corroborates(announcement: Any, verdict: Any, observed_at: Any) -> bool:
+    """Does an own-account observation with this verdict confirm this post?"""
+    if not isinstance(announcement, dict):
+        return False
+    announced_at = _moment(announcement.get("announced_at"))
+    seen = _moment(observed_at)
+    if announced_at is None or seen is None:
+        return False
+    return corroborates_at(
+        event_kind(announcement),
+        event_stage(announcement),
+        verdict,
+        (seen - announced_at).total_seconds(),
+        trusted=is_trusted_announcement(announcement),
+    )
+
+
+def has_witness(observation: Any) -> bool:
+    """Does this observation name the second account that saw the same clear?"""
+    if not isinstance(observation, dict):
+        return False
+    witness = observation.get("witness")
+    return isinstance(witness, str) and bool(witness.strip())
+
+
+def probe_incident_key(vendor: Any, window: Any, bracket_lo: Any) -> str:
+    """`<vendor>:probe-<window>-<lower bracket epoch>` — a probe-first incident's key.
+
+    The one spelling, shared by the fusion layer that states it and the
+    notifier that derives it for an unfused row. Production has filed sixteen
+    probe rows as `openai:probe-weekly-<lo>` and `anthropic:probe-weekly-<lo>`
+    (the window NAME, because build's whitelist never carried the slot), so
+    that is the format: any other spelling would re-key them and re-enter them
+    as fresh.
+    """
+    name = str(window or "").strip() or "window"
+    low = (
+        bracket_lo
+        if isinstance(bracket_lo, int) and not isinstance(bracket_lo, bool)
+        else None
+    )
+    return f"{vendor}:probe-{name}-{'unbracketed' if low is None else low}"
+
+
 def derive_status(
     event: Any,
     observation: Any,
@@ -609,18 +779,10 @@ def derive_status(
             # Discovered too late to tell anyone about. Shown, never mailed.
             return STATUS_HISTORICAL
 
-        kind = event_kind(announcement)
         stage = event_stage(announcement)
-        corroborates = verdict in CONFIRMING_VERDICTS.get(kind, ())
-        in_window = False
-        if corroborates and observed_at is not None and announced_at is not None:
-            delta = (observed_at - announced_at).total_seconds()
-            # A forecast has no upper bound: the thing was announced for later,
-            # so "later" is exactly when the probe should see it.
-            in_window = delta >= -CONFIRM_WINDOW_SECONDS and (
-                stage == STAGE_FORECAST or delta <= CONFIRM_WINDOW_SECONDS
-            )
-        if in_window:
+        if observed is not None and corroborates(
+            announcement, verdict, observed.get("observed_at")
+        ):
             return STATUS_CONFIRMED
         if stage == STAGE_FORECAST:
             until = _moment(announcement.get("forecast_until"))
@@ -634,12 +796,16 @@ def derive_status(
         return STATUS_ANNOUNCED
 
     # No announcement we may repeat. An own-account clear can still stand on
-    # its own, but only the one verdict that means "nothing this account did
-    # explains it", and only after the hold has given a witness time to appear.
+    # its own, but only the one verdict that means "a second account saw it
+    # too", and only after the hold has given a retraction or a post time to
+    # appear. The second account IS the witness; a vendor_reset that names
+    # none (no exporter writes one) needs a verified post that says a reset
+    # happened, and without either stays observed_single, which is never
+    # shown and never mailed.
     if verdict in ORIGINATING_VERDICTS and observed_at is not None:
         if moment < observed_at + timedelta(seconds=OBSERVED_HOLD_SECONDS):
             return STATUS_OBSERVED_PENDING
-        if is_explicit_reset_witness(announcement):
+        if has_witness(observed) or is_explicit_reset_witness(announcement):
             return STATUS_OBSERVED
         return STATUS_OBSERVED_SINGLE
     # A hint: an unverified post, a verdict that explains itself, or nothing.

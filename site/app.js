@@ -31,12 +31,15 @@ const FORECAST_LOW_CONFIDENCE = 15; // fewer than this (e.g. Anthropic's 8) → 
 // The interactive twin of build_observations() / probe_badge() in
 // scripts/build.py. Same classes, same data-verdict values, same label
 // vocabulary; tests/test_build.py fails the build if one side drifts.
-// `self_applied` and `credit_granted` have no label here on purpose — they
-// describe what the account owner did, and build.py never puts them in
-// data.json in the first place.
+// `self_applied`, `credit_granted`, `unresolved`, `unattributed` and
+// `account_change` have no label here on purpose — they describe what the
+// account owner did, or what one account alone cannot tell apart, and
+// build.py never puts them in data.json in the first place. `vendor_reset`
+// reaches data.json only with its second account's row beside it.
 const VERDICT_LABELS = {
   natural_expiry: "Scheduled expiry",
   limit_change: "Limits rescaled",
+  vendor_reset: "Vendor reset · two accounts",
 };
 const PROBE_STALE_SECONDS = 900;
 const OBSERVATIONS_SHOWN = 6;

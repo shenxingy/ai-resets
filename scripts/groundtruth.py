@@ -23,18 +23,25 @@ single plan tier cannot say that, and saying it is how a tracker loses trust.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts import attribution, incidents
 from scripts.timefmt import describe_age, format_epoch_pacific
 from scripts.quota_probe import (
     VERDICT_CREDIT_GRANTED,
     VERDICT_LIMIT_CHANGE,
     VERDICT_OF_CLASS,
+    window_name,
 )
 
-DEFAULT_STATE_DIR = Path("/var/lib/ai-resets")
+# The same variable, and the same default, the probes write under. build.py
+# reads its announcement annotations and incident fusion from here, so a site
+# built against a copied state directory (a migration rehearsal, a second
+# host) reads that copy instead of the live one.
+DEFAULT_STATE_DIR = Path(os.environ.get("AI_RESETS_STATE", "/var/lib/ai-resets"))
 
 HEALTH_FILENAME = "probe_health.json"
 CURSOR_FILENAME = "quota_cursor.json"
@@ -104,6 +111,11 @@ class ProbeSpec:
     # "not observed" is still sayable but "the window was too empty to tell" is
     # not, so the two must not share a branch.
     has_usage_reading: bool = False
+    # What this probe checked and found clean on a clear it could not explain,
+    # in the words the email uses. Each probe excludes different own-causes
+    # (docs/reset-attribution.md, "The rule"), so the sentence is per probe.
+    own_causes_clause: str = ""
+    product: str = ""
 
     def exists(self, root: Path | None = None) -> bool:
         """Does this probe actually ship? A spec for a script that is not here
@@ -121,16 +133,24 @@ PROBE_SPECS = {
         weekly_kinds=("codex/10080",),
         script="quota_probe.py",
         has_usage_reading=True,
+        own_causes_clause="no banked credit was spent and the account did not change",
+        product="Codex",
     ),
     "anthropic": ProbeSpec(
         vendor="anthropic",
-        # Two Max 20x accounts on one operator machine. Only the labels are ever
-        # written or shown; the organisations behind them are not ours to name.
+        # Two accounts on one operator machine, no longer on one plan: account
+        # a moved from Max to a Team org on 2026-10-11, so the phrase names no
+        # plan. Only the labels are ever written or shown; the organisations
+        # behind them are not ours to name.
         labels=("claude:a", "claude:b"),
         events_filename="claude_events.jsonl",
-        account_phrase="our Max 20x accounts",
+        account_phrase="our two Claude accounts",
         weekly_kinds=("weekly_all",),
         script="claude_probe.py",
+        own_causes_clause=(
+            "the account did not change and no reset menu was opened on this machine"
+        ),
+        product="Claude",
     ),
 }
 
@@ -190,39 +210,39 @@ def clear_observations(
     """
     spec = PROBE_SPECS.get(vendor)
     path = Path(state_dir) / (spec.events_filename if spec else EVENTS_FILENAME)
+    records = read_event_log(path)
+    if records is None:
+        return []
+    # The two-account rule runs over the whole log first, exactly as the
+    # exporters run it: this reader must never decide a different verdict
+    # for the same record than the published feed did.
+    records = attribution.attribute(records)
     clears: dict[str, dict[str, Any]] = {}
     retracted: set[str] = set()
-    try:
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                kind = event.get("kind")
-                key = event.get("event_id") or f"{event.get('slot')}:{event.get('detected_at')}"
-                if kind == "retraction":
-                    retracted.add(key)
-                elif kind in (None, "clear") and event.get("classification"):
-                    # kind is absent on records written before it existed; a
-                    # classification is what makes a record a clear.
-                    clears[key] = event
-    except OSError:
-        return []
+    for event in records:
+        kind = event.get("kind")
+        key = event.get("event_id") or f"{event.get('slot')}:{event.get('detected_at')}"
+        if kind == "retraction":
+            retracted.add(key)
+        elif kind in (None, "clear") and event.get("classification"):
+            # kind is absent on records written before it existed; a
+            # classification is what makes a record a clear.
+            clears[key] = event
     out = []
     for key, event in clears.items():
         withdrawn = key in retracted
         if (withdrawn and not include_retracted) or not event.get("confirmed"):
             continue
-        if event.get("concordance") == "accounts_disagree":
+        vendor_reset = attribution.is_vendor_reset(event)
+        if event.get("concordance") == "accounts_disagree" and not vendor_reset:
             # One account's weekly window cleared while another readable
             # account's did not. The Claude probe already withholds this from
             # its own export for that reason; reading the raw event log here
             # would walk straight around that gate and publish the
             # announcement as confirmed. A withhold only one consumer honours
-            # is not a withhold.
+            # is not a withhold. A paired clear is the exception: the first of
+            # a pair is written before the other account clears, so it reads
+            # `disagree` about the very reset its witness confirms.
             continue
         moment = event.get("detected_at")
         if not isinstance(moment, int):
@@ -230,20 +250,88 @@ def clear_observations(
         row = {
             "key": key,
             "t": moment,
-            "verdict": _INTERNAL_TO_VERDICT.get(
-                str(event.get("classification")), VERDICT_UNRESOLVED
-            ),
+            "verdict": VERDICT_VENDOR
+            if vendor_reset
+            else _INTERNAL_TO_VERDICT.get(str(event.get("classification")), VERDICT_UNRESOLVED),
             "used_before": event.get("used_before"),
             "used_after": event.get("used_after"),
             "early_by_seconds": event.get("early_by_seconds"),
             "credits_before": event.get("credits_before"),
             "credits_after": event.get("credits_after"),
             "credits_carried": bool(event.get("credits_carried")),
+            # What fusion needs to key a probe-first incident and the email
+            # needs to say which account saw it. Labels and times only: the
+            # fingerprints stay in the log.
+            "account": event.get("account"),
+            "window_minutes": event.get("window_minutes"),
+            "clear_bracket_lo": event.get("clear_bracket_lo"),
+            "clear_bracket_hi": event.get("clear_bracket_hi"),
         }
+        if vendor_reset:
+            for field in attribution.STAMPED_FIELDS:
+                row[field] = event.get(field)
         if include_retracted:
             row["retracted"] = withdrawn
         out.append(row)
     return sorted(out, key=lambda o: o["t"])
+
+
+def withdrawn_pair_clears(
+    state_dir: Path | str = DEFAULT_STATE_DIR,
+    *,
+    vendor: str = "openai",
+) -> list[list[dict[str, Any]]]:
+    """Each pair a retraction has since broken, as the clears it was made of.
+
+    Read straight from the log rather than from clear_observations, whose
+    evidence gates rightly skip what is left of the pair (a lone clear that
+    read `disagree`): the people mailed about the pair are owed the
+    correction whatever the surviving half now proves.
+    """
+    spec = PROBE_SPECS.get(vendor)
+    records = read_event_log(Path(state_dir) / spec.events_filename) if spec else None
+    if not records:
+        return []
+    retracted = attribution.retracted_ids(records)
+    clears = attribution.latest_clears(records)
+    groups = []
+    for members in attribution.withdrawn_pairs(records):
+        groups.append([
+            {
+                "key": key,
+                "t": clears[key].get("detected_at"),
+                "verdict": VERDICT_VENDOR,
+                "retracted": key in retracted,
+                "account": clears[key].get("account"),
+                "window_minutes": clears[key].get("window_minutes"),
+                "clear_bracket_lo": clears[key].get("clear_bracket_lo"),
+                "used_before": clears[key].get("used_before"),
+                "used_after": clears[key].get("used_after"),
+            }
+            for key in members
+        ])
+    return groups
+
+
+def read_event_log(path: Path) -> list[dict[str, Any]] | None:
+    """Every JSON object in an append-only event log, or None when unreadable.
+
+    A torn final line (the probe appends while this reads) costs that line,
+    not the log.
+    """
+    records: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    records.append(event)
+    except OSError:
+        return None
+    return records
 
 
 def incident_observations(
@@ -322,6 +410,205 @@ def observation_near(
     if not candidates:
         return None
     return min(candidates, key=lambda o: abs(o["t"] - announced_at))
+
+
+def corroborating_clear(
+    vendor: str,
+    *,
+    kind: str | None,
+    is_forecast: bool,
+    announced_at: int | None,
+    trusted: bool,
+    state_dir: Path | str = DEFAULT_STATE_DIR,
+) -> dict[str, Any] | None:
+    """The clear that confirms this post under incidents.corroborates_at, if any.
+
+    The same rule the site's `confirmed` status is derived from, so the email
+    and the page cannot disagree about whether our account saw the reset: a
+    two-account `vendor_reset` within +-6 h, or one account's `unattributed`
+    clear between three hours before and one hour after a trusted
+    retrospective reset post. Nearest to the post wins.
+    """
+    if not isinstance(announced_at, int) or kind is None:
+        return None
+    stage = incidents.STAGE_FORECAST if is_forecast else incidents.STAGE_RETROSPECTIVE
+    candidates = [
+        clear
+        for clear in clear_observations(state_dir, vendor=vendor)
+        # The same +-6 h match window build.py bounds every candidate with:
+        # the rule gives a forecast no upper bound, the match does.
+        if abs(clear["t"] - announced_at) <= MATCH_WINDOW_SECONDS
+        and incidents.corroborates_at(
+            kind, stage, clear["verdict"], clear["t"] - announced_at, trusted=trusted
+        )
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda clear: (abs(clear["t"] - announced_at), clear["key"]))
+
+
+def _relative_to_post(moment: int, announced_at: int) -> str:
+    """`2 min before this post` / `23 s after this post`."""
+    lead = announced_at - moment
+    if lead == 0:
+        return "the same second as this post"
+    return f"{describe_age(abs(lead))} {'before' if lead > 0 else 'after'} this post"
+
+
+def _epoch_of(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value:
+        moment = incidents._moment(value)
+        return int(moment.timestamp()) if moment is not None else None
+    return None
+
+
+def _level(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _one_clear(clear: dict[str, Any]) -> str:
+    """`account b at Oct 11, 2026, 8:58 PM PDT (96% to 0%)`, from a clear summary."""
+    account = clear.get("account")
+    who = f"account {account}" if isinstance(account, str) and account else "one account"
+    moment = _epoch_of(clear.get("observed_at"))
+    when = format_epoch_pacific(moment) if moment is not None else "a time we never recorded"
+    before, after = clear.get("used_before"), clear.get("used_after")
+    levels = f" ({before:.0f}% to {after:.0f}%)" if _level(before) and _level(after) else ""
+    return f"{who} at {when}{levels}"
+
+
+def _sentence(clause: str) -> str:
+    return f"{clause[:1].upper()}{clause[1:]}." if clause else ""
+
+
+def pair_summaries(clear: dict[str, Any]) -> list[dict[str, Any]]:
+    """A paired clear row and its witness, as two summaries, earliest first."""
+    summaries = [
+        {
+            "account": clear.get("account"),
+            "observed_at": clear.get("t"),
+            "used_before": clear.get("used_before"),
+            "used_after": clear.get("used_after"),
+        }
+    ]
+    if clear.get("verdict") == VERDICT_VENDOR:
+        summaries.append(
+            {
+                "account": clear.get("witness_account"),
+                "observed_at": clear.get("witness_at"),
+                "used_before": clear.get("witness_used_before"),
+                "used_after": clear.get("witness_used_after"),
+            }
+        )
+    return sorted(summaries, key=lambda c: _epoch_of(c.get("observed_at")) or 0)
+
+
+def observed_line(
+    spec: ProbeSpec, clear: dict[str, Any], announced_at: int, *, is_forecast: bool
+) -> dict[str, Any]:
+    """What our own account saw of a post we are confirming, both times if two.
+
+    Says when, relative to the post, and what the probe checked: that is the
+    only basis on which one account's clear could have confirmed anything.
+    """
+    window = window_name(clear.get("window_minutes"))
+    clause = _sentence(spec.own_causes_clause or "nothing this probe can see explained it")
+    clears = pair_summaries(clear)
+    timing = " and ".join(
+        _relative_to_post(moment, announced_at)
+        for moment in (_epoch_of(c.get("observed_at")) for c in clears)
+        if moment is not None
+    )
+    if len(clears) > 1:
+        line = (
+            f"Seen on two of our {spec.product} accounts: "
+            f"{' and '.join(_one_clear(c) for c in clears)}, {timing}. On each the "
+            f"{window} window cleared early. {clause}"
+        )
+    else:
+        early = clear.get("early_by_seconds")
+        early_phrase = (
+            f" {describe_age(early)} before its scheduled expiry"
+            if _level(early) and early > 0
+            else " early"
+        )
+        line = (
+            f"Seen on our {spec.product} {_one_clear(clears[0])}, {timing}: the "
+            f"{window} window cleared{early_phrase}. {clause}"
+        )
+    result: dict[str, Any] = {
+        "status": STATUS_OK,
+        "observed": True,
+        "verdict": clear["verdict"],
+        "line": line,
+    }
+    if is_forecast:
+        # The forecast thing happened: the subject must not still say
+        # "not yet landed" above a body saying it was seen.
+        result["landed"] = True
+    return result
+
+
+def probe_first_line(
+    event: dict[str, Any],
+    *,
+    state_dir: Path | str = DEFAULT_STATE_DIR,
+) -> dict[str, Any]:
+    """The ground-truth block of an incident our own accounts started.
+
+    There is no post to compare against, so "Not observed" would contradict the
+    very clear the email reports. This describes the clears instead: each
+    account, when, and what it read, then why two of them were enough. The
+    clears come from the row the fusion layer stamped (so the mail matches the
+    page that announced it), else from the event log, else from the row's own
+    reading — never from nothing.
+    """
+    vendor = str(event.get("vendor") or "")
+    spec = PROBE_SPECS.get(vendor)
+    product = spec.product if spec else incidents.vendor_product(vendor)
+    clause = _sentence(
+        (spec.own_causes_clause if spec else "") or "nothing our probe can see explained it"
+    )
+    clears = sorted(
+        (clear for clear in (event.get("clears") or []) if isinstance(clear, dict)),
+        key=lambda c: _epoch_of(c.get("observed_at")) or 0,
+    )
+    if not clears:
+        seen = _epoch_of(event.get("observed_at"))
+        near = [
+            row
+            for row in clear_observations(state_dir, vendor=vendor)
+            if row["verdict"] == VERDICT_VENDOR
+            and seen is not None
+            and abs(row["t"] - seen) <= MATCH_WINDOW_SECONDS
+        ]
+        if near and seen is not None:
+            clears = pair_summaries(min(near, key=lambda row: (abs(row["t"] - seen), row["key"])))
+    if not clears:
+        clears = [
+            {
+                "account": event.get("account"),
+                "observed_at": event.get("observed_at"),
+                "used_before": event.get("used_before"),
+                "used_after": event.get("used_after"),
+            }
+        ]
+    window = str(event.get("window") or "") or "usage"
+    described = " and ".join(_one_clear(clear) for clear in clears)
+    if len(clears) > 1:
+        line = (
+            f"Seen on two of our {product} accounts before anyone announced it: "
+            f"{described}. On each the {window} window cleared early. {clause} One "
+            "account alone cannot tell its holder's own reset from the vendor's; two "
+            "separate accounts clearing within the hour is why we are writing."
+        )
+    else:
+        line = f"Seen on our {product} {described}: the {window} window cleared early. {clause}"
+    return {"status": STATUS_OK, "observed": True, "verdict": VERDICT_VENDOR, "line": line}
 
 
 def credit_grant_since(
@@ -436,12 +723,16 @@ def ground_truth_line(
     probed_vendors: tuple[str, ...] | None = None,
     kind: str | None = None,
     announced_at: int | None = None,
+    trusted: bool = False,
 ) -> dict[str, Any]:
     """One sentence about our own accounts, plus the status that produced it.
 
     `kind` and `announced_at` matter for a forecast: what counts as "landed"
     depends on what was forecast. A banked reset lands as a credit in the
-    bank; a plain reset lands as the window clearing.
+    bank; a plain reset lands as the window clearing. `trusted` is whether the
+    post passed incidents.is_trusted_announcement: one account's clear may
+    only ever confirm a trusted post, so it defaults to the answer that
+    confirms less.
     """
     # Three different states, and conflating any two of them produces a false
     # sentence: we run no probe for this vendor at all; we run one and it has
@@ -464,6 +755,21 @@ def ground_truth_line(
                 "update is the announcement only, not a confirmed observation."
             ),
         }
+
+    # The observation is checked FIRST, before the probe's health or any usage
+    # reading: a clear already in the log is evidence whether or not the probe
+    # is healthy this minute, and the page's `confirmed` status is derived from
+    # the same rule without asking either.
+    match = corroborating_clear(
+        vendor,
+        kind=kind,
+        is_forecast=is_forecast,
+        announced_at=announced_at,
+        trusted=trusted,
+        state_dir=state_dir,
+    )
+    if match is not None and isinstance(announced_at, int):
+        return observed_line(spec, match, announced_at, is_forecast=is_forecast)
 
     health = load_probe_health(state_dir)
     status = probe_status(health, label, now)
@@ -492,10 +798,10 @@ def ground_truth_line(
             ),
         }
 
-    # Account clears cannot establish why quota recovered. In particular, a
-    # nearby announcement does not exclude personal reset use. Do not turn a
-    # raw global_candidate record into a confirmation here. Bank-credit grants
-    # retain their separate, timing-only handling below.
+    # Nothing above confirmed the post. An unresolved clear (a check that
+    # could not run) or a lone unattributed one outside the tight window says
+    # nothing about the vendor, so the reading below is all there is to quote.
+    # Bank-credit grants retain their separate, timing-only handling.
     reading = codex_weekly_reading(state_dir) if spec.has_usage_reading else None
     if reading is None and spec.has_usage_reading:
         return {

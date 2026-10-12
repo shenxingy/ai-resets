@@ -96,15 +96,46 @@ def main():
 
     # ─── Own-account observations ───
     # A `self_applied` clear or a `credit_granted` row says what the OWNER did
-    # with their own account. Neither may reach the published page or feed.
+    # with their own account; `unresolved`, `unattributed`, `account_change`
+    # and `session_only` are what one account cannot tell apart. None of them
+    # may reach the published page or feed. A `vendor_reset` may, but only
+    # beside the second account's row it names as its witness: a lone one is
+    # an old exporter's claim, or a regression of the two-account rule.
     data = json.loads((SITE / "data.json").read_text(encoding="utf-8"))
     published = 0
     for name, vendor in data.get("vendors", {}).items():
-        for observation in vendor.get("observations", []):
+        observations = vendor.get("observations", [])
+        vendor_resets = {
+            observation.get("event_id")
+            for observation in observations
+            if observation.get("verdict") == "vendor_reset"
+        }
+        for observation in observations:
             verdict = observation.get("verdict")
+            if verdict is None and observation.get("status") == "retracted":
+                # A withdrawn probe-first incident: carried for the notifier's
+                # correction, drawn by neither renderer, and so it must hold
+                # nothing a renderer could draw.
+                for field in ("headline", "evidence"):
+                    assert not observation.get(field), (
+                        f"{name} withdrawn incident carries a {field}"
+                    )
+                continue
             assert verdict in PUBLIC_VERDICTS, f"{name} published verdict {verdict!r}"
+            if verdict == "vendor_reset":
+                witness = observation.get("witness")
+                assert witness and witness != observation.get("event_id") and witness in vendor_resets, (
+                    f"{name} published a vendor_reset with no second account beside it"
+                )
             published += 1
-    for private in ("self_applied", "credit_granted", "vendor_reset", "unresolved"):
+    for private in (
+        "self_applied",
+        "credit_granted",
+        "unresolved",
+        "unattributed",
+        "account_change",
+        "session_only",
+    ):
         assert private not in index, f"{private} reached the rendered page"
     if published:
         assert 'class="observations"' in index, "public observations exist but nothing rendered them"

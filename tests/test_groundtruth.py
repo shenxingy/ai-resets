@@ -6,6 +6,9 @@ verify" rather than as "nothing happened".
 """
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,7 +31,9 @@ from scripts.groundtruth import (
     STATUS_OK,
     STATUS_UNPROBED,
     codex_weekly_reading,
+    corroborating_clear,
     ground_truth_line,
+    probe_first_line,
     probe_status,
 )
 
@@ -79,7 +84,8 @@ class StateDirCase(unittest.TestCase):
     def write(self, name, payload):
         (self.state / name).write_text(json.dumps(payload))
 
-    def line(self, vendor="openai", *, is_forecast=False, kind=None, announced_at=None):
+    def line(self, vendor="openai", *, is_forecast=False, kind=None, announced_at=None,
+             trusted=False):
         return ground_truth_line(
             vendor,
             is_forecast=is_forecast,
@@ -87,6 +93,7 @@ class StateDirCase(unittest.TestCase):
             state_dir=self.state,
             kind=kind,
             announced_at=announced_at,
+            trusted=trusted,
         )
 
     def write_events(self, events):
@@ -375,7 +382,7 @@ class ClaudeObservationTests(StateDirCase):
         self.claude_events([self.CLEAR])
         result = self.line("anthropic", kind="reset", announced_at=self.POST)
         self.assertNotIn("verdict", result)
-        self.assertIn("Not observed on our Max 20x accounts", result["line"])
+        self.assertIn("Not observed on our two Claude accounts", result["line"])
         self.assertNotIn("48% to 0%", result["line"])
 
     def test_accounts_that_disagree_cannot_confirm_an_announcement(self):
@@ -384,12 +391,12 @@ class ClaudeObservationTests(StateDirCase):
         self.claude_events([{**self.CLEAR, "concordance": "accounts_disagree"}])
         result = self.line("anthropic", kind="reset", announced_at=self.POST)
         self.assertIsNone(result.get("verdict"))
-        self.assertIn("Not observed on our Max 20x accounts", result["line"])
+        self.assertIn("Not observed on our two Claude accounts", result["line"])
 
     def test_with_no_observation_it_says_it_looked_and_saw_nothing(self):
         self.claude_events([])
         result = self.line("anthropic", kind="reset", announced_at=self.POST)
-        self.assertIn("Not observed on our Max 20x accounts", result["line"])
+        self.assertIn("Not observed on our two Claude accounts", result["line"])
         self.assertIn("cannot rule a reset out", result["line"])
 
     def test_a_blind_half_of_a_two_account_probe_is_not_a_clean_look(self):
@@ -553,3 +560,240 @@ class IncidentObservationStreamTests(StateDirCase):
         self.write_log([disagreeing], name="claude_events.jsonl")
         rows = incident_observations(self.state, vendor="anthropic")
         self.assertEqual(rows, [])
+
+
+# ─── Attributed clears: what the email may now say it saw ────────────────────
+
+
+def attributed_clear(label, fp, hi, *, used=60.0, family="codex/10080", **edit):
+    """A stage-1 unattributed clear, as either detector writes it."""
+    event = {
+        "event_id": f"{label}:{family}:{hi}",
+        "kind": "clear",
+        "slot": f"{label}:{family}",
+        "detected_at": hi,
+        "account": label,
+        "window_family": family,
+        "window_minutes": 10080,
+        "used_before": used,
+        "used_after": 0.0,
+        "clear_bracket_lo": hi - 60,
+        "clear_bracket_hi": hi,
+        "account_fp_before": fp,
+        "account_fp_after": fp,
+        "classification": "unattributed",
+        "confirmed": True,
+        "early_by_seconds": 3 * 86400,
+        "credits_before": 1,
+        "credits_after": 1,
+    }
+    event.update(edit)
+    return event
+
+
+class AttributedObservationTests(StateDirCase):
+    POST = NOW - 3600
+
+    def setUp(self):
+        super().setUp()
+        self.write("probe_health.json", health())
+        self.write("quota_cursor.json", cursor(used=0.0, credits=1))
+
+    def claude_events(self, records):
+        (self.state / "claude_events.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in records)
+        )
+        blocks = {label: {"label": label, "updated_at": NOW - 30, "last_ok_at": NOW - 30}
+                  for label in ("claude:a", "claude:b")}
+        self.write("probe_health.json", blocks)
+
+    def test_a_pair_reads_as_a_vendor_reset_naming_its_witness(self):
+        a = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 300)
+        b = attributed_clear("b", "bbbbbbbbbbbb", self.POST - 180, used=88.0)
+        self.write_events([a, b])
+        rows = clear_observations(self.state)
+        self.assertEqual([r["verdict"] for r in rows], [VERDICT_VENDOR, VERDICT_VENDOR])
+        self.assertEqual(rows[0]["witness"], b["event_id"])
+        self.assertEqual((rows[0]["witness_account"], rows[0]["witness_used_before"]), ("b", 88.0))
+        self.assertNotIn("account_fp_after", rows[0])
+
+    def test_a_lone_clean_clear_reads_as_unattributed(self):
+        self.write_events([attributed_clear("a", "aaaaaaaaaaaa", self.POST - 300)])
+        self.assertEqual([r["verdict"] for r in clear_observations(self.state)], ["unattributed"])
+
+    def test_a_record_claiming_a_witness_is_rederived(self):
+        forged = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 300,
+                                  attribution="two_accounts", witness="b:codex/10080:1")
+        self.write_events([forged])
+        self.assertEqual([r["verdict"] for r in clear_observations(self.state)], ["unattributed"])
+
+    def test_the_first_of_a_claude_pair_is_kept_although_it_read_disagree(self):
+        # Account a's clear is written while b is busy and has not cleared,
+        # so it reads `disagree` about the very reset b confirms minutes later.
+        a = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 600, family="weekly_all",
+                             concordance="accounts_disagree")
+        b = attributed_clear("b", "bbbbbbbbbbbb", self.POST - 300, family="weekly_all",
+                             concordance="accounts_agreeing")
+        self.claude_events([a, b])
+        rows = clear_observations(self.state, vendor="anthropic")
+        self.assertEqual([r["verdict"] for r in rows], [VERDICT_VENDOR, VERDICT_VENDOR])
+
+    def test_a_lone_disagreeing_claude_clear_is_still_withheld(self):
+        lone = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 120, family="weekly_all",
+                                concordance="accounts_disagree")
+        self.claude_events([lone])
+        self.assertEqual(clear_observations(self.state, vendor="anthropic"), [])
+        result = self.line("anthropic", kind="reset", announced_at=self.POST, trusted=True)
+        self.assertNotIn("observed", result)
+
+    def test_one_codex_account_confirms_a_trusted_post_two_minutes_later(self):
+        self.write_events([attributed_clear("a", "aaaaaaaaaaaa", self.POST - 120)])
+        result = self.line(kind="reset", announced_at=self.POST, trusted=True)
+        self.assertTrue(result["observed"])
+        self.assertEqual(result["verdict"], "unattributed")
+        self.assertIn("Seen on our Codex account a at", result["line"])
+        self.assertIn("(60% to 0%), 2 min before this post: the weekly window cleared 3.0 days "
+                      "before its scheduled expiry.", result["line"])
+        self.assertIn("No banked credit was spent and the account did not change.", result["line"])
+        self.assertNotIn("landed", result)
+
+    def test_one_claude_account_names_the_reset_menu_instead_of_the_bank(self):
+        self.claude_events([attributed_clear("b", "bbbbbbbbbbbb", self.POST + 23, family="weekly_all")])
+        result = self.line("anthropic", kind="reset", announced_at=self.POST, trusted=True)
+        self.assertTrue(result["observed"])
+        self.assertIn("Seen on our Claude account b", result["line"])
+        self.assertIn("23 s after this post", result["line"])
+        self.assertIn(
+            "The account did not change and no reset menu was opened on this machine.",
+            result["line"],
+        )
+        self.assertNotIn("banked", result["line"])
+
+    def test_one_account_never_confirms_an_untrusted_post_or_a_far_one(self):
+        self.write_events([attributed_clear("a", "aaaaaaaaaaaa", self.POST - 120)])
+        for kwargs in (
+            {"trusted": False},
+            {"trusted": True, "is_forecast": True},
+            {"trusted": True, "kind": "banked"},
+            {"trusted": True, "announced_at": self.POST + 4 * 3600},
+            {"trusted": True, "announced_at": self.POST - 3600 - 121},
+        ):
+            with self.subTest(kwargs=kwargs):
+                args = {"kind": "reset", "announced_at": self.POST, **kwargs}
+                result = self.line(**args)
+                self.assertIsNot(result.get("observed"), True)
+                self.assertNotIn("Seen on", result["line"])
+
+    def test_two_accounts_give_both_times(self):
+        a = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 300)
+        b = attributed_clear("b", "bbbbbbbbbbbb", self.POST - 180, used=88.0)
+        self.write_events([a, b])
+        # A curated post is enough for two accounts: the pair needs no trust.
+        result = self.line(kind="reset", announced_at=self.POST, trusted=False)
+        self.assertTrue(result["observed"])
+        self.assertEqual(result["verdict"], VERDICT_VENDOR)
+        self.assertIn("Seen on two of our Codex accounts: account a at", result["line"])
+        self.assertIn("(60% to 0%) and account b at", result["line"])
+        self.assertIn("(88% to 0%), 5 min before this post and 3 min before this post", result["line"])
+
+    def test_a_forecast_reset_seen_by_two_accounts_has_landed(self):
+        a = attributed_clear("a", "aaaaaaaaaaaa", self.POST + 5 * 3600)
+        b = attributed_clear("b", "bbbbbbbbbbbb", self.POST + 5 * 3600 + 60)
+        self.write_events([a, b])
+        result = self.line(is_forecast=True, kind="reset", announced_at=self.POST)
+        self.assertTrue(result["landed"])
+        self.assertTrue(result["observed"])
+
+    def test_a_forecast_is_matched_inside_the_six_hours_like_the_site(self):
+        # The rule gives a forecast no upper bound; the match window does.
+        a = attributed_clear("a", "aaaaaaaaaaaa", self.POST + 7 * 3600)
+        b = attributed_clear("b", "bbbbbbbbbbbb", self.POST + 7 * 3600 + 60)
+        self.write_events([a, b])
+        result = self.line(is_forecast=True, kind="reset", announced_at=self.POST)
+        self.assertNotIn("landed", result)
+
+    def test_the_observation_outranks_a_probe_that_went_blind_since(self):
+        self.write_events([attributed_clear("a", "aaaaaaaaaaaa", self.POST - 120)])
+        self.write("probe_health.json", health(blind_since=NOW - 600))
+        result = self.line(kind="reset", announced_at=self.POST, trusted=True)
+        self.assertTrue(result["observed"])
+
+    def test_the_nearest_corroborating_clear_wins(self):
+        near = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 120)
+        far = attributed_clear("a", "aaaaaaaaaaaa", self.POST - 7000)
+        self.write_events([far, near])
+        match = corroborating_clear("openai", kind="reset", is_forecast=False,
+                                    announced_at=self.POST, trusted=True, state_dir=self.state)
+        self.assertEqual(match["key"], near["event_id"])
+        self.assertIsNone(corroborating_clear("openai", kind=None, is_forecast=False,
+                                              announced_at=self.POST, trusted=True,
+                                              state_dir=self.state))
+        self.assertIsNone(corroborating_clear("openai", kind="reset", is_forecast=False,
+                                              announced_at=None, trusted=True,
+                                              state_dir=self.state))
+
+
+class ProbeFirstLineTests(StateDirCase):
+    """The ground-truth block of a mail our own accounts started."""
+
+    ROW = {
+        "vendor": "anthropic", "origin": "probe", "window": "weekly",
+        "observed_at": "2026-09-05T02:00:00Z", "used_before": 48.0, "used_after": 0.0,
+        "account": "a",
+        "clears": [
+            {"account": "a", "observed_at": "2026-09-05T02:00:00Z", "used_before": 48.0, "used_after": 0.0},
+            {"account": "b", "observed_at": "2026-09-05T02:03:00Z", "used_before": 60.0, "used_after": 1.0},
+        ],
+    }
+
+    def test_it_describes_both_clears_and_never_says_not_observed(self):
+        result = probe_first_line(self.ROW, state_dir=self.state)
+        self.assertTrue(result["observed"])
+        self.assertEqual(result["verdict"], VERDICT_VENDOR)
+        line = result["line"]
+        self.assertIn("Seen on two of our Claude accounts before anyone announced it", line)
+        self.assertIn("account a at Sep 4, 2026, 7:00 PM PDT (48% to 0%)", line)
+        self.assertIn("account b at Sep 4, 2026, 7:03 PM PDT (60% to 1%)", line)
+        self.assertIn("no reset menu was opened on this machine", line)
+        self.assertNotIn("Not observed", line)
+
+    def test_without_stamped_clears_it_reads_the_log(self):
+        moment = 1788573600 - 3600
+        a = attributed_clear("a", "aaaaaaaaaaaa", moment, family="weekly_all")
+        b = attributed_clear("b", "bbbbbbbbbbbb", moment + 180, family="weekly_all", used=60.0)
+        (self.state / "claude_events.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in (a, b))
+        )
+        row = {k: v for k, v in self.ROW.items() if k != "clears"}
+        row["observed_at"] = "2026-09-05T02:00:00Z"
+        line = probe_first_line(row, state_dir=self.state)["line"]
+        self.assertIn("account a at", line)
+        self.assertIn("and account b at", line)
+
+    def test_with_nothing_on_record_it_still_describes_the_row_itself(self):
+        row = {k: v for k, v in self.ROW.items() if k != "clears"}
+        result = probe_first_line(row, state_dir=self.state)
+        self.assertTrue(result["observed"])
+        self.assertIn("Seen on our Claude account a at Sep 4, 2026, 7:00 PM PDT (48% to 0%)",
+                      result["line"])
+        self.assertNotIn("Not observed", result["line"])
+
+    def test_an_unknown_vendor_does_not_raise(self):
+        result = probe_first_line({"vendor": "google", "origin": "probe"}, state_dir=self.state)
+        self.assertIn("Seen on our Gemini one account at a time we never recorded", result["line"])
+
+
+class StateDirTests(unittest.TestCase):
+    def test_the_default_state_dir_follows_the_probes_variable(self):
+        # build.py reads annotations and fusion from here, so a site built
+        # against a copied state directory must read the copy.
+        root = Path(__file__).resolve().parent.parent
+        for env, expected in (({"AI_RESETS_STATE": "/tmp/copy"}, "/tmp/copy"), ({}, "/var/lib/ai-resets")):
+            with self.subTest(env=env):
+                clean = {k: v for k, v in os.environ.items() if k != "AI_RESETS_STATE"}
+                out = subprocess.run(
+                    [sys.executable, "-c",
+                     "from scripts import groundtruth; print(groundtruth.DEFAULT_STATE_DIR)"],
+                    cwd=root, env={**clean, **env}, capture_output=True, text=True, check=True,
+                )
+                self.assertEqual(out.stdout.strip(), expected)

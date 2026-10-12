@@ -1006,7 +1006,8 @@ class LocalTraceTests(StateDirTest):
                   if e.get("limit_kind") == "weekly_all"]
         self.assertEqual(first[0]["classification"], qp.CLASS_UNATTRIBUTED)
         self.assertEqual(second[0]["concordance"], cp.CONCORDANCE_AGREEING)
-        # Stage 1 publishes nothing new: the two-account upgrade is not here.
+        # One record never upgrades itself: the two-account rule runs over the
+        # whole log in scripts/attribution.py (tests/test_attribution.py).
         self.assertFalse(cp.is_public(second[0], set()))
 
     def test_the_unattributed_sentence_says_what_was_checked_and_not_whose_it_was(self):

@@ -51,7 +51,9 @@ Detection rests on four measured facts about the Codex weekly window:
    cleared). Only when every own-cause check ran and passed is it
    `unattributed`, and that is still private: a reset the account holder
    paid for touches nothing this probe reads. A check that could not run
-   leaves it `global_candidate`, with the reason naming the check.
+   leaves it `global_candidate`, with the reason naming the check. An
+   `unattributed` clear becomes the vendor's only in scripts/attribution.py,
+   when a second account of ours cleared the same window within the hour.
 
 The probe can also stop seeing anything at all: the RPC returned HTTP 404 for
 35 consecutive polls on 2026-09-03 (10:43-11:17 EDT) and nothing alerted. So
@@ -94,6 +96,7 @@ if str(ROOT) not in sys.path:
     # scripts/ on sys.path rather than the repository root.
     sys.path.insert(0, str(ROOT))
 
+from scripts import attribution  # noqa: E402
 from scripts.timefmt import format_epoch_pacific  # noqa: E402
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -1624,12 +1627,13 @@ PUBLIC_CLASSIFICATIONS = (CLASS_NATURAL,)
 def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     """May this observation be shown to anyone but the owner?
 
-    Only scheduled clears can currently be published. Early or unanchored
-    clears may be personal reset use, even with an unchanged credit balance.
-    They remain in the owner's log as unresolved, including historical rows.
-    An `unattributed` clear is no exception: one account with every own-cause
-    excluded still cannot rule out a reset its holder paid for. An account
-    change is not a clear at all.
+    Scheduled clears are published, and so is an `unattributed` clear that
+    scripts/attribution.py upgraded because a second account of ours cleared
+    the same window within the hour. Every other early or unanchored clear may
+    be personal reset use, even with an unchanged credit balance, and stays in
+    the owner's log, historical rows included. A lone `unattributed` clear is
+    no exception: one account with every own-cause excluded still cannot rule
+    out a reset its holder paid for. An account change is not a clear at all.
 
     What stays private is what describes the OWNER: a self-applied clear and a
     credit grant reveal how the account holder spends their own banked credit.
@@ -1642,7 +1646,7 @@ def is_public(event: dict[str, Any], retracted_ids: set[str]) -> bool:
     if kind != EVENT_CLEAR or not event.get("confirmed"):
         return False
     classification = event.get("classification")
-    if classification not in PUBLIC_CLASSIFICATIONS:
+    if classification not in PUBLIC_CLASSIFICATIONS and not attribution.is_vendor_reset(event):
         return False
     if not event.get("event_id"):
         # No identity means the retraction check below cannot apply, and a
@@ -1787,6 +1791,35 @@ def checked_clause(event: dict[str, Any]) -> str:
     lo, hi = _epoch(event.get("clear_bracket_lo")), _epoch(event.get("clear_bracket_hi"))
     span = f" of a {hi - lo}-second bracket" if lo is not None and hi is not None else ""
     return f"the same account and plan were read on both sides{span}"
+
+
+def witness_clause(event: dict[str, Any], window: str) -> str:
+    """`Our account b's Codex weekly window cleared too, 3 minutes later (88% to 1%)`.
+
+    The second account is the whole of the evidence a vendor reset rests on,
+    so its own numbers are printed, from the fields scripts/attribution.py
+    stamped from its record, rather than summarised. Shared by both probes.
+    """
+    other = event.get("witness_account")
+    who = f"Our account {other}'s" if isinstance(other, str) and other else "A second account's"
+    hi, seen = _epoch(event.get("clear_bracket_hi")), _epoch(event.get("witness_at"))
+    when = "within the same hour"
+    if hi is not None and seen is not None:
+        minutes = int(abs(seen - hi) / 60 + 0.5)
+        if minutes == 0:
+            when = "within the same minute"
+        else:
+            unit = "minute" if minutes == 1 else "minutes"
+            when = f"{minutes} {unit} {'later' if seen > hi else 'earlier'}"
+    change = (
+        f"{_percent(event.get('witness_used_before'))} to "
+        f"{_percent(event.get('witness_used_after'))}"
+    )
+    return (
+        f"{who} {window} window cleared too, {when} ({change}), with every own-cause "
+        "check passing there as well. Two separate accounts clearing together within "
+        "the hour is counted as the vendor's reset, not either holder's."
+    )
 
 
 def account_change_sentences(event: dict[str, Any], window: str) -> tuple[str, str]:
@@ -1942,6 +1975,17 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
             "out. This is not evidence of a provider-wide reset.",
         )
 
+    if verdict == VERDICT_VENDOR_RESET:
+        # Reachable only through scripts/attribution.py: VERDICT_OF_CLASS maps
+        # no class to this verdict, so one account can never produce it.
+        return (
+            f"Our {window} window cleared {early} early, and so did a second "
+            "account of ours.",
+            f"{change} {moment}, {gap}; {checked_clause(event)}, and the banked credit "
+            f"count read {before_credits} then {after_credits} with no credit leaving "
+            f"the bank. {witness_clause(event, window)}",
+        )
+
     if verdict == VERDICT_UNATTRIBUTED:
         return (
             f"Our {window} window cleared {early} early, with no cause on our side "
@@ -2005,6 +2049,8 @@ def observation(event: dict[str, Any], retracted_ids: set[str]) -> dict[str, Any
         verdict = (
             VERDICT_OF_CLASS.get(classification) if isinstance(classification, str) else None
         )
+        if attribution.is_vendor_reset(event):
+            verdict = VERDICT_VENDOR_RESET
         observed_at = event.get("clear_bracket_hi") or event.get("detected_at")
 
     headline, evidence = observation_sentences(event, verdict)
@@ -2210,10 +2256,11 @@ def export_observations(
     cleared early with every own-cause this probe can see excluded, it cleared
     early with a check that could not be run, there was no expiry time on
     record and we cannot tell, or the account behind it changed. Only
-    scheduled clears are public.
+    scheduled clears and two-account vendor resets are public, and the second
+    is decided by scripts/attribution.py over the whole log, never per record.
     """
     now = int(time.time()) if now is None else now
-    events = read_events(EVENTS_FILE)
+    events = attribution.attribute(read_events(EVENTS_FILE))
     retracted = {
         event["event_id"]
         for event in events
