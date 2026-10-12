@@ -15,6 +15,7 @@
 # without touching the system.
 #
 #   ./infra/install-units.sh --show          # print the resolved values and diff
+#   ./infra/install-units.sh --render NAME   # print one rendered unit, install nothing
 #   sudo -E ./infra/install-units.sh         # render, install, daemon-reload
 #
 set -euo pipefail
@@ -49,6 +50,19 @@ USER_HOME="$(getent passwd "$AI_RESETS_USER" | cut -d: -f6)"
 # with AI_RESETS_CODEX_HOME if the probe's account ever moves.
 : "${AI_RESETS_CODEX_HOME:=$USER_HOME/.codex}"
 CODEX_HOME="$AI_RESETS_CODEX_HOME"
+# The second Codex account's home, read as account b (docs/reset-attribution.md,
+# "Second Codex account"). Its own variable for the same reason: an exported
+# CODEX_HOME must move neither account. Unset, it is the profile home that
+# holds a second login, when one is there; exported empty, there is no second
+# account. Empty renders the probe unit without b's lines at all.
+if [ -z "${AI_RESETS_CODEX_HOME_B+set}" ]; then
+  if [ -f "$USER_HOME/.codex-profiles/main1/auth.json" ]; then
+    AI_RESETS_CODEX_HOME_B="$USER_HOME/.codex-profiles/main1"
+  else
+    AI_RESETS_CODEX_HOME_B=""
+  fi
+fi
+CODEX_HOME_B="$AI_RESETS_CODEX_HOME_B"
 # `codex` on PATH is often a wrapper, and systemd's PATH excludes ~/.local/bin
 # in any case, so prefer the real binary the standalone package installs. The
 # `current` component is a symlink the package updates, so upgrades follow.
@@ -65,7 +79,15 @@ fi
 PUBLIC_URL="${PUBLIC_URL:-$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["public_url"])' "$REPO_ROOT/site.config.json")}"
 
 render() {
+  # With no second Codex home, every line naming it is left out rather than
+  # rendered empty: `ReadWritePaths=` with nothing after it RESETS the list,
+  # which would take account a's own write path with it and hang its reads.
+  local second='/__CODEX_HOME_B__/d'
+  if [ -n "$CODEX_HOME_B" ]; then
+    second="s|__CODEX_HOME_B__|$CODEX_HOME_B|g"
+  fi
   sed \
+    -e "$second" \
     -e "s|__AI_RESETS_USER__|$AI_RESETS_USER|g" \
     -e "s|__AI_RESETS_GROUP__|$AI_RESETS_GROUP|g" \
     -e "s|__AI_RESETS_REPO__|$AI_RESETS_REPO|g" \
@@ -87,6 +109,7 @@ resolved for this host:
   AI_RESETS_REPO   $AI_RESETS_REPO
   CODEX_BIN        ${CODEX_BIN:-(not found — the Codex probe will not start)}
   CODEX_HOME       $CODEX_HOME
+  CODEX_HOME_B     ${CODEX_HOME_B:-(none — the Codex probe reads one account)}
   CLAUDE_CREDS_A   $CLAUDE_CREDS_A
   CLAUDE_CREDS_B   $CLAUDE_CREDS_B
   PUBLIC_URL       $PUBLIC_URL
@@ -94,6 +117,12 @@ TXT
 }
 
 # ─── Act ─────────────────────────────────────────────────────────────────────
+
+if [ "${1:-}" = "--render" ]; then
+  [ -n "${2:-}" ] && [ -f "$SRC/${2}.in" ] || die "usage: $0 --render <unit name>, e.g. ai-resets-probe.service"
+  render "$SRC/${2}.in"
+  exit 0
+fi
 
 if [ "${1:-}" = "--show" ]; then
   report

@@ -21,6 +21,7 @@ in a clone and a real gate on the machine that serves the site.
 """
 
 import os
+import pwd
 import re
 import shutil
 import subprocess
@@ -118,6 +119,14 @@ class UnitContentTests(unittest.TestCase):
         # ExecStart points at, and the unit would not start at all.
         self.assertNotIn("ProtectHome=tmpfs", text)
 
+    def test_the_second_codex_home_is_writable_only_optionally(self):
+        # The template's own promise, before any rendering: account b's write
+        # path carries the `-` that keeps a missing home from stopping the unit.
+        found = directives(template("ai-resets-probe.service").read_text(encoding="utf-8"))
+        second = [value for value in found["ReadWritePaths"] if "__CODEX_HOME_B__" in value]
+        self.assertEqual(second, ["-__CODEX_HOME_B__"])
+        self.assertIn("AI_RESETS_CODEX_HOME_B=__CODEX_HOME_B__", found["Environment"])
+
     def test_every_exec_start_is_an_absolute_path(self):
         for name in UNIT_NAMES:
             found = directives(template(name).read_text(encoding="utf-8"))
@@ -152,33 +161,133 @@ class UnitContentTests(unittest.TestCase):
                 )
 
 
+def installer(*args: str, env_extra: dict | None = None, unset: tuple = ()) -> str:
+    """Run the installer in a mode that installs nothing; return its stdout."""
+    env = {key: value for key, value in os.environ.items() if key not in unset}
+    result = subprocess.run(
+        ["bash", str(INSTALLER), *args],
+        capture_output=True, text=True, timeout=120, cwd=REPO,
+        env={**env, **(env_extra or {})},
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout
+
+
+# The second home's own variable is unset unless a test sets it: a shell that
+# exports one must not decide what these tests see.
+SECOND = "AI_RESETS_CODEX_HOME_B"
+
+
 class InstallerResolutionTests(unittest.TestCase):
     """The installer's host-value resolution, checked without installing."""
 
-    def resolve(self, env_extra: dict) -> str:
-        result = subprocess.run(
-            ["bash", str(INSTALLER), "--show"],
-            capture_output=True, text=True, timeout=120, cwd=REPO,
-            env={**os.environ, **env_extra},
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout
+    def resolve(self, env_extra: dict, unset: tuple = (SECOND,)) -> dict[str, str]:
+        """The `--show` report as {name: value}."""
+        values = {}
+        for line in installer("--show", env_extra=env_extra, unset=unset).splitlines():
+            if line.startswith("  ") and not line.startswith("   "):
+                name, _, value = line.strip().partition(" ")
+                values[name] = value.strip()
+        return values
 
     def test_a_leaked_interactive_codex_home_does_not_move_the_probe(self):
         # The owner exports CODEX_HOME for their own profile-based Codex.
         # Under `sudo -E` that export reaches this installer, and the probe
         # unit would render paths for a home the spawned codex never reads
         # while its real one stays read-only behind ProtectHome.
-        out = self.resolve({"CODEX_HOME": "/home/bogus/interactive"})
-        line = next(l for l in out.splitlines() if l.strip().startswith("CODEX_HOME"))
-        self.assertNotIn("bogus", line)
+        values = self.resolve({"CODEX_HOME": "/home/bogus/interactive"})
+        self.assertNotIn("bogus", values["CODEX_HOME"])
+        # Nor does it become the second account.
+        self.assertNotIn("bogus", values["CODEX_HOME_B"])
 
     def test_the_probe_codex_home_has_its_own_override(self):
-        out = self.resolve(
+        values = self.resolve(
             {"CODEX_HOME": "/home/bogus/interactive", "AI_RESETS_CODEX_HOME": "/home/bogus/probe"}
         )
-        line = next(l for l in out.splitlines() if l.strip().startswith("CODEX_HOME"))
-        self.assertIn("/home/bogus/probe", line)
+        self.assertEqual(values["CODEX_HOME"], "/home/bogus/probe")
+
+    def test_the_second_codex_home_has_its_own_override(self):
+        values = self.resolve(
+            {"CODEX_HOME": "/home/bogus/interactive", SECOND: "/home/bogus/second"}
+        )
+        self.assertEqual(values["CODEX_HOME_B"], "/home/bogus/second")
+        self.assertNotIn("bogus/second", values["CODEX_HOME"])
+
+    def test_an_explicitly_empty_second_home_means_no_second_account(self):
+        values = self.resolve({SECOND: ""}, unset=())
+        self.assertTrue(values["CODEX_HOME_B"].startswith("(none"), values)
+
+    def test_the_default_is_the_profile_home_only_when_it_holds_a_login(self):
+        # Whichever way this machine is set up, the installer must agree with
+        # the rule: the profile home when its auth.json exists, else none.
+        user = os.environ.get("SUDO_USER") or os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name
+        home = Path(pwd.getpwnam(user).pw_dir) / ".codex-profiles" / "main1"
+        values = self.resolve({})
+        if (home / "auth.json").is_file():
+            self.assertEqual(values["CODEX_HOME_B"], str(home))
+        else:
+            self.assertTrue(values["CODEX_HOME_B"].startswith("(none"), values)
+
+    def test_a_profile_home_without_a_login_is_not_a_second_account(self):
+        # `nobody` has no home at all, so no auth.json can be there.
+        try:
+            account = pwd.getpwnam("nobody")
+        except KeyError:
+            raise unittest.SkipTest("no `nobody` account on this host")
+        if (Path(account.pw_dir) / ".codex-profiles" / "main1" / "auth.json").exists():
+            raise unittest.SkipTest("`nobody` has a Codex login here")
+        values = self.resolve({"AI_RESETS_USER": "nobody"})
+        self.assertTrue(values["CODEX_HOME_B"].startswith("(none"), values)
+
+
+class RenderTests(unittest.TestCase):
+    """What `--render` writes for the probe unit, with and without account b."""
+
+    def render(self, second: str | None, **extra: str) -> str:
+        """The probe unit; `second` None leaves the installer to its default."""
+        extra = {"AI_RESETS_CODEX_HOME": "/srv/probe/codex-a", **extra}
+        if second is not None:
+            extra[SECOND] = second
+        return installer("--render", "ai-resets-probe.service", env_extra=extra, unset=(SECOND,))
+
+    def test_a_second_home_is_passed_and_punched_through_optionally(self):
+        found = directives(self.render("/srv/probe/codex-b"))
+        self.assertIn("AI_RESETS_CODEX_HOME_B=/srv/probe/codex-b", found["Environment"])
+        self.assertIn("CODEX_HOME=/srv/probe/codex-a", found["Environment"])
+        # `-`: a second home that has gone missing must not stop the unit.
+        self.assertEqual(found["ReadWritePaths"], ["/srv/probe/codex-a", "-/srv/probe/codex-b"])
+
+    def assert_no_second_account(self, text: str) -> None:
+        found = directives(text)
+        self.assertEqual(found["ReadWritePaths"], ["/srv/probe/codex-a"])
+        self.assertFalse(
+            any(value.startswith("AI_RESETS_CODEX_HOME_B") for value in found["Environment"])
+        )
+        self.assertNotIn("__CODEX_HOME_B__", text)
+
+    def test_no_second_home_leaves_no_line_for_it(self):
+        # An empty `ReadWritePaths=` RESETS the list, which would take account
+        # a's own write path with it and hang every read.
+        self.assert_no_second_account(self.render(""))
+
+    def test_a_host_with_no_second_login_renders_no_second_account(self):
+        try:
+            pwd.getpwnam("nobody")
+        except KeyError:
+            raise unittest.SkipTest("no `nobody` account on this host")
+        self.assert_no_second_account(self.render(None, AI_RESETS_USER="nobody"))
+
+    def test_every_unit_renders_with_no_placeholder_left(self):
+        for name in UNIT_NAMES:
+            for second in ("/srv/probe/codex-b", ""):
+                with self.subTest(unit=name, second=second):
+                    text = installer("--render", name, env_extra={SECOND: second}, unset=(SECOND,))
+                    self.assertEqual(PLACEHOLDER.findall(text), [])
+
+    def test_an_unknown_unit_is_refused_with_its_usage(self):
+        with self.assertRaisesRegex(AssertionError, "usage: .* --render <unit name>"):
+            installer("--render", "no-such.service")
 
 
 class InstalledUnitDriftTests(unittest.TestCase):
