@@ -657,7 +657,19 @@ def is_anchor_jump_clear(previous: dict[str, Any], current: dict[str, Any]) -> b
     before_anchor, after_anchor = previous.get("resets_at"), current.get("resets_at")
     if before_anchor is None or after_anchor is None:
         return False
-    return after_anchor - before_anchor > NATURAL_GRACE_SECONDS
+    if after_anchor - before_anchor <= NATURAL_GRACE_SECONDS:
+        return False
+    # A clear inside the gap puts the new anchor a whole window past a moment
+    # INSIDE the gap: Codex re-anchors to the first use after the clear plus
+    # the window, and Anthropic's lattice moves on by whole windows once its
+    # expiry passes. An anchor short of that was already in force before the
+    # gap opened, so the window went BACK to it. On 2026-09-09 a stale replica
+    # read 92% on the anchor from before the 09-08 reset (16:56:40 UTC), and
+    # the next row written, 44 minutes later, read 19% on the anchor the
+    # account had held since that reset: replayed from the sample log, a
+    # phantom 92% -> 19% clear, the only one in the whole log.
+    window_seconds = int(current.get("window_minutes") or 0) * 60
+    return after_anchor >= previous["t"] + window_seconds - ANCHOR_JITTER_SECONDS
 
 
 def resolve_credits(

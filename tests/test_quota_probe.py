@@ -975,6 +975,38 @@ class IsAnchorJumpClearTest(unittest.TestCase):
                 sample(GAP_BEFORE_T, 100, None), sample(GAP_AFTER_T, 8, GAP_NEW_ANCHOR)
             )
         )
+
+    def test_an_anchor_the_window_held_before_the_gap_is_not_a_clear(self):
+        # 2026-09-09, as the sample log holds it: a stale replica's 92% on the
+        # pre-reset anchor, then 44 minutes on, 19% on the anchor the account
+        # had held since its 09-08 reset. Forward by 2.9 days, yet short of a
+        # window past anything inside the gap: the window went BACK to it.
+        stale, back = LIVE_2026_09_09_FLAPS[0]
+        self.assertFalse(
+            qp.is_anchor_jump_clear(
+                sample(stale[0], stale[1], stale[2]), sample(back[0], back[1], back[2])
+            )
+        )
+        # The boundary: a whole window past the read that opened the gap,
+        # less the server's rounding of a frozen anchor.
+        lattice = GAP_BEFORE_T + WEEK_SECONDS - qp.ANCHOR_JITTER_SECONDS
+        for anchor, expected in ((lattice, True), (lattice - 1, False)):
+            with self.subTest(short_by=GAP_BEFORE_T + WEEK_SECONDS - anchor):
+                self.assertEqual(
+                    qp.is_anchor_jump_clear(
+                        sample(GAP_BEFORE_T, 100, GAP_ANCHOR), sample(GAP_AFTER_T, 8, anchor)
+                    ),
+                    expected,
+                )
+        # Anthropic's lattice rolls on by exactly one window at expiry, and the
+        # 5-hour window is held to its own length, not the week's.
+        five_hours = 300 * 60
+        self.assertTrue(
+            qp.is_anchor_jump_clear(
+                sample(GAP_BEFORE_T, 100, GAP_BEFORE_T + 600, window=300),
+                sample(GAP_AFTER_T, 8, GAP_BEFORE_T + 600 + five_hours, window=300),
+            )
+        )
         self.assertFalse(
             qp.is_anchor_jump_clear(
                 sample(GAP_BEFORE_T, 100, GAP_ANCHOR), sample(GAP_AFTER_T, 8, None)
@@ -1031,6 +1063,18 @@ class DetectorAnchorJumpTest(unittest.TestCase):
             d.observe(sample(GAP_BEFORE_T + 180, 20, GAP_BEFORE_T + 180 + WEEK_SECONDS)),
             [],
         )
+
+    def test_the_2026_09_09_flaps_as_recorded_are_not_a_clear(self):
+        # Every codex/10080 row the sample log holds from before the 09-08
+        # clear to 09-09 18:14:40, replayed as written: the one clear, kept,
+        # and nothing from either flap. Replaying the whole log this way
+        # yields every clear in docs/reset-attribution.md's table and, before
+        # the window-past-the-gap test, this one phantom besides.
+        rows = LIVE_2026_09_08_CLEAR + [r for flap in LIVE_2026_09_09_FLAPS for r in flap]
+        d = qp.Detector()
+        events = feed(d, [sample(t, used, anchor, credits=c) for t, used, anchor, c in rows])
+        self.assertEqual([e["event_id"] for e in events], ["codex/10080:1788830556"])
+        self.assertTrue(events[0]["confirmed"])
 
     def test_the_live_sample_stream_gains_no_extra_clears(self):
         # Regression guard for the replay: the 2026-09-02 rows re-anchor once
