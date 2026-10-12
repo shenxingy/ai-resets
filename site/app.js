@@ -46,6 +46,8 @@ const OBSERVATIONS_SHOWN = 6;
 const DEFAULT_COVERAGE = "Own-account probe; see the methodology for what it can and cannot see.";
 const NO_ANNOUNCEMENTS_COPY =
   "No tracked announcements for this provider yet. The lines below are what our own account measured.";
+// How many of our accounts a confirmed announcement names, in words.
+const SEEN_COUNT_WORDS = { 2: "two", 3: "three", 4: "four" };
 
 const RING_R_OUTER = 68;
 const RING_R_INNER = 52;
@@ -504,6 +506,39 @@ function renderVendorSection(vendorKey, now) {
   return section;
 }
 
+// The interactive twin of seen_line() in scripts/build.py: "Seen on our
+// account 2 min before this post", from the annotation's labels, minutes and
+// verdict only — never an id, a time of day or a level. tests/test_build.py
+// runs both on the same cases.
+function seenSpan(minutes) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+}
+
+function seenLine(event) {
+  const observed = event && event.observed;
+  if (!observed || typeof observed !== "object" || observed.status !== "confirmed") return "";
+  const minutes = observed.lead_minutes;
+  if (typeof minutes !== "number" || !Number.isInteger(minutes)) return "";
+  const labels = Array.isArray(observed.accounts) ? observed.accounts : [];
+  const count = new Set(labels.filter((label) => typeof label === "string" && label)).size;
+  let who;
+  if (observed.verdict === "vendor_reset" && count >= 2) {
+    who = `${SEEN_COUNT_WORDS[count] || String(count)} of our accounts`;
+  } else if (observed.verdict === "unattributed" && count >= 1) {
+    who = "our account";
+  } else {
+    return "";
+  }
+  let when;
+  if (minutes === 0) when = "within a minute of this post";
+  else if (minutes > 0) when = `${seenSpan(minutes)} before this post`;
+  else when = `${seenSpan(-minutes)} after this post`;
+  return `Seen on ${who} ${when}`;
+}
+
 function renderEventsFeed(now) {
   const list = document.getElementById("events-list");
   const count = document.getElementById("events-count");
@@ -530,10 +565,13 @@ function renderEventsFeed(now) {
       el("time", { datetime: r.announced_at }, [formatEventTimestamp(r)]),
       el("span", {}, [meta.company]),
     ]));
-    item.appendChild(el("div", { class: "event-content" }, [
+    const content = el("div", { class: "event-content" }, [
       el("span", { class: "event-kind" }, [r.kind]),
       el("p", {}, [cleanText]),
-    ]));
+    ]);
+    const seen = seenLine(r);
+    if (seen) content.appendChild(el("p", { class: "event-seen" }, [seen]));
+    item.appendChild(content);
     item.appendChild(el("a", { class: "event-link", href: r.url, target: "_blank", rel: "noopener" }, ["Original ↗"]));
     list.appendChild(item);
   }

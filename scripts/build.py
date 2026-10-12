@@ -513,6 +513,58 @@ def recent_events(vendors, generated, days=30):
 
 EMPTY_EVENTS_MARKER = "no-recent-events"
 
+# How many of our accounts a confirmation names, in words; the email and the
+# probe-first subject count the same way (incidents.probe_accounts_phrase).
+SEEN_COUNT_WORDS = {2: "two", 3: "three", 4: "four"}
+
+
+def seen_span(minutes):
+    """`2 min`, `1 h`, `3 h 5 min`: a whole number of minutes, unsigned."""
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"{hours} h {rest} min" if rest else f"{hours} h"
+
+
+def seen_line(event):
+    """`Seen on our account 2 min before this post`, or "".
+
+    What the methodology promises a confirmed announcement shows: that our
+    own account saw it, and when, relative to the post. Built only from the
+    annotation's labels, minutes and verdict (annotate_announcements), never
+    an id, a time of day or a level: one account's clear stays private
+    except as the timing of a reset the vendor announced. A `vendor_reset`
+    names how many accounts, an `unattributed` clear says "our account", and
+    anything else, or an annotation that is not `confirmed`, draws nothing.
+    The interactive twin is seenLine() in site/app.js; tests/test_build.py
+    runs both on the same cases.
+    """
+    observed = event.get("observed") if isinstance(event, dict) else None
+    if not isinstance(observed, dict) or observed.get("status") != OBSERVED_CONFIRMED:
+        return ""
+    minutes = observed.get("lead_minutes")
+    if isinstance(minutes, float) and minutes.is_integer():
+        # JSON has one number type: app.js reads 2.0 as the integer 2.
+        minutes = int(minutes)
+    if isinstance(minutes, bool) or not isinstance(minutes, int):
+        return ""
+    labels = observed.get("accounts")
+    count = len({label for label in labels if isinstance(label, str) and label}) if isinstance(labels, list) else 0
+    verdict = observed.get("verdict")
+    if verdict == VERDICT_VENDOR_RESET and count >= 2:
+        who = f"{SEEN_COUNT_WORDS.get(count, str(count))} of our accounts"
+    elif verdict == incidents.VERDICT_UNATTRIBUTED and count >= 1:
+        who = "our account"
+    else:
+        return ""
+    if minutes == 0:
+        when = "within a minute of this post"
+    elif minutes > 0:
+        when = f"{seen_span(minutes)} before this post"
+    else:
+        when = f"{seen_span(-minutes)} after this post"
+    return f"Seen on {who} {when}"
+
 
 def build_event_rows(rows, limit=8):
     if not rows:
@@ -530,10 +582,12 @@ def build_event_rows(rows, limit=8):
     for _occurred, key, event in rows[:limit]:
         company, _product = VENDOR_META[key]
         confidence = "approximate" if event.get("confidence") == "approx" else "observed"
+        seen = seen_line(event)
+        seen_html = f'<p class="event-seen">{html.escape(seen)}</p>' if seen else ""
         output.append(
             f'''<article class="event-item" style="--vendor-color:var(--v-{key})">
   <div class="event-meta"><time datetime="{html.escape(event["announced_at"], quote=True)}">{html.escape(format_event_timestamp(event))}</time><span>{company}</span></div>
-  <div class="event-content"><span class="event-kind">{html.escape(event.get("kind", "signal"))}</span><p>{html.escape(clean_event_text(event.get("text", "")))}</p><span class="sr-only">Timestamp confidence: {confidence}.</span></div>
+  <div class="event-content"><span class="event-kind">{html.escape(event.get("kind", "signal"))}</span><p>{html.escape(clean_event_text(event.get("text", "")))}</p>{seen_html}<span class="sr-only">Timestamp confidence: {confidence}.</span></div>
   <a class="event-link" href="{html.escape(event["url"], quote=True)}" rel="noopener">Original ↗</a>
 </article>'''
         )

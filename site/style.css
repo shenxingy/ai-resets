@@ -1156,6 +1156,27 @@ main {
   line-height: 1.55;
 }
 
+.event-content .event-seen {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 9px;
+  color: var(--good);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+}
+
+.event-content .event-seen::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateY(-1px);
+}
+
 .event-link {
   display: inline-flex;
   align-items: center;

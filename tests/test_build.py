@@ -507,6 +507,95 @@ class StaticAndInteractiveParityTests(unittest.TestCase):
         self.assertIn(f"PROBE_STALE_SECONDS = {PROBE_STALE_SECONDS}", self.app_js)
         self.assertIn(f"OBSERVATIONS_SHOWN = {OBSERVATIONS_SHOWN}", self.app_js)
 
+    SEEN_CASES = [
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset", "accounts": ["a", "b"],
+                       "lead_minutes": 3}}, "Seen on two of our accounts 3 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": 2}}, "Seen on our account 2 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["b"],
+                       "lead_minutes": -23}}, "Seen on our account 23 min after this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["b"],
+                       "lead_minutes": 0}}, "Seen on our account within a minute of this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b"], "lead_minutes": 79}},
+         "Seen on two of our accounts 1 h 19 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b"], "lead_minutes": -120}},
+         "Seen on two of our accounts 2 h after this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b", "c"], "lead_minutes": 5}},
+         "Seen on three of our accounts 5 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset",
+                       "accounts": ["a", "b", "c", "d", "e"], "lead_minutes": 5}},
+         "Seen on 5 of our accounts 5 min before this post"),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": 2.0}}, "Seen on our account 2 min before this post"),
+        # Nothing a reader could misread as a confirmation draws anything.
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset", "accounts": ["a"],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "vendor_reset", "accounts": ["a", "a"],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": [],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "natural_expiry", "accounts": ["a"],
+                       "lead_minutes": 3}}, ""),
+        ({"observed": {"status": "not_seen"}}, ""),
+        ({"observed": {"status": "unprobed"}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": "2"}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": True}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": ["a"],
+                       "lead_minutes": 2.5}}, ""),
+        ({"observed": {"status": "confirmed", "verdict": "unattributed", "accounts": "a",
+                       "lead_minutes": 2}}, ""),
+        ({"observed": ["confirmed"]}, ""),
+        ({}, ""),
+    ]
+
+    def test_the_seen_line_reads_alike_in_both_renderers(self):
+        # The methodology promises a confirmed announcement shows when our
+        # own account saw it (privacy review); neither renderer drew it.
+        for event, expected in self.SEEN_CASES:
+            with self.subTest(event=event):
+                self.assertEqual(build.seen_line(event), expected)
+        node = shutil.which("node")
+        if node is None:
+            raise unittest.SkipTest("node is not available on this machine")
+        app_js = Path(build.SITE_DIR) / "app.js"
+        harness = f"""
+        const src = require('fs').readFileSync({str(app_js)!r}, 'utf8');
+        // `var`: a `const` declared inside eval stays inside that eval.
+        eval(src.match(/const SEEN_COUNT_WORDS[^\\n]*/)[0].replace(/^const /, "var "));
+        eval(src.match(/function seenSpan[\\s\\S]*?\\n}}/)[0]);
+        eval(src.match(/function seenLine[\\s\\S]*?\\n}}/)[0]);
+        const cases = JSON.parse(process.env.SEEN_CASES);
+        console.log(JSON.stringify(cases.map((event) => seenLine(event))));
+        """
+        result = subprocess.run(
+            [node, "-e", harness], capture_output=True, text=True, timeout=60,
+            env={**os.environ, "SEEN_CASES": json.dumps([event for event, _ in self.SEEN_CASES])},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for (event, expected), js in zip(self.SEEN_CASES, json.loads(result.stdout)):
+            with self.subTest(event=event):
+                self.assertEqual(js, expected)
+        self.assertIn('"event-seen"', self.app_js)
+
+    def test_the_static_feed_draws_the_seen_line_and_nothing_private(self):
+        event = trusted_event("2109132167112782291", announced_at=1791700000,
+                              url="https://x.com/thsottiaux/status/2109132167112782291")
+        event["observed"] = {"status": "confirmed", "observed_at": "2026-10-11T04:00:00Z",
+                             "lead_seconds": 120, "lead_minutes": 2, "verdict": "unattributed",
+                             "accounts": ["a"]}
+        markup = build.build_event_rows([(None, "openai", event)])
+        self.assertIn('<p class="event-seen">Seen on our account 2 min before this post</p>',
+                      markup)
+        for private in ("unattributed", "2026-10-11T04:00:00Z", "lead_"):
+            self.assertNotIn(private, markup)
+        event["observed"] = {"status": "not_seen"}
+        self.assertNotIn("event-seen", build.build_event_rows([(None, "openai", event)]))
+
     def test_the_tracking_badge_is_gone_from_both(self):
         self.assertNotIn('["Tracking"]', self.app_js)
         self.assertNotIn(">Tracking<", (Path(build.SITE_DIR) / "index.template.html").read_text(encoding="utf-8"))
