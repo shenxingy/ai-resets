@@ -1024,9 +1024,10 @@ def fuse_incidents(vendors, state_dir=None, now=None):
       - an unclaimed pair's rows carry its probe key, `origin`, `kind`, the
         account labels and both clears, and the earliest row alone carries
         the `status` (one incident, one mailable row);
-      - a pair since withdrawn is one extra row with `status: retracted`, no
-        verdict and no sentence, so the page draws nothing and the notifier
-        can still correct what it sent.
+      - a pair that stood and was since withdrawn is one extra row with
+        `status: retracted`, its key, its id and no verdict, and nothing
+        else, so the page draws nothing, the feed shows no clear, and the
+        notifier can still correct what it sent.
     """
     state = Path(state_dir) if state_dir else groundtruth.DEFAULT_STATE_DIR
     for key, vendor in vendors.items():
@@ -1140,17 +1141,20 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             next(row for row in member_rows if row is not None)["status"] = status
 
         for incident, members in withdrawn:
-            first = members[0]
+            # What the notifier needs to correct a mail it sent, and nothing
+            # a reader could learn a clear from: the key it filed the mail
+            # under, the event key it recorded, and the status. The clears,
+            # the account labels and the times stay out. The correction is
+            # composed from the notifier's own record of what it sent and from
+            # the raw log on this host (groundtruth), never from this row, so
+            # a lone clear can never ride a correction onto the public feed.
+            # check_site.WITHDRAWN_FIELDS holds the published row to exactly
+            # these keys.
             vendor.setdefault("observations", []).append({
-                **_incident_fields(incident, members),
-                "event_id": published_id(first["key"]),
+                "incident_key": incident,
+                "event_id": published_id(members[0]["key"]),
                 "status": incidents.STATUS_RETRACTED,
                 "verdict": None,
-                "observed_at": iso_z(first["t"]),
-                "observed_before": iso_z(first["clear_bracket_lo"])
-                if isinstance(first.get("clear_bracket_lo"), int)
-                else None,
-                "window": groundtruth.window_name(first.get("window_minutes")),
             })
 
 

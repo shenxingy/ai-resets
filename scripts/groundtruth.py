@@ -283,7 +283,10 @@ def withdrawn_pair_clears(
     *,
     vendor: str = "openai",
 ) -> list[list[dict[str, Any]]]:
-    """Each pair a retraction has since broken, as the clears it was made of.
+    """Each pair that stood and a retraction has since broken, as its clears.
+
+    Which groups those are is attribution.withdrawn_pairs' answer, including
+    its rule that a pair must have stood before the revert (was_live).
 
     Read straight from the log rather than from clear_observations, whose
     evidence gates rightly skip what is left of the pair (a lone clear that

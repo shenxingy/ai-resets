@@ -21,6 +21,14 @@ SITE = ROOT / "site"
 # list is a check that will one day pass while the page leaks.
 from scripts.build import PUBLIC_VERDICTS, VERDICT_LABELS  # noqa: E402
 
+# Everything a withdrawn probe-first incident row may carry, and no more.
+# Deliberately restated rather than imported, the opposite choice from the
+# verdicts above: this list is the lock on the one row that is published
+# BECAUSE something was taken back, so it must not widen when build.py does.
+# Its clears, account labels and times once carried a lone `unattributed`
+# clear onto the feed (privacy review, RetractedBeforeWitness).
+WITHDRAWN_FIELDS = frozenset({"incident_key", "event_id", "status", "verdict"})
+
 
 def png_size(path):
     with path.open("rb") as handle:
@@ -115,11 +123,11 @@ def main():
             if verdict is None and observation.get("status") == "retracted":
                 # A withdrawn probe-first incident: carried for the notifier's
                 # correction, drawn by neither renderer, and so it must hold
-                # nothing a renderer could draw.
-                for field in ("headline", "evidence"):
-                    assert not observation.get(field), (
-                        f"{name} withdrawn incident carries a {field}"
-                    )
+                # nothing a reader could learn a clear from.
+                extra = sorted(set(observation) - WITHDRAWN_FIELDS)
+                assert not extra, (
+                    f"{name} withdrawn incident carries {', '.join(extra)}"
+                )
                 continue
             assert verdict in PUBLIC_VERDICTS, f"{name} published verdict {verdict!r}"
             if verdict == "vendor_reset":

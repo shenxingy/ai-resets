@@ -437,11 +437,24 @@ class ObservationPrivacyTests(SiteCheckCase):
         withdrawn = {"verdict": None, "status": "retracted", "event_id": "obs-a",
                      "incident_key": "anthropic:probe-weekly-1"}
         self.run_check(**with_observations(withdrawn))
-        for field in ("headline", "evidence"):
+        # Anything beyond what the notifier needs fails, above all what a
+        # reader could learn a clear from: the clears, the account labels,
+        # and the times (privacy review, RetractedBeforeWitness).
+        for field, value in (
+            ("headline", "Cleared early."),
+            ("evidence", "Cleared early."),
+            ("clears", [{"account": "b", "observed_at": "2026-10-11T06:57:40Z"}]),
+            ("accounts", ["a", "b"]),
+            ("observed_at", "2026-10-11T06:27:40Z"),
+            ("observed_before", "2026-10-11T06:26:40Z"),
+            ("observed_after", "2026-10-11T06:27:40Z"),
+            ("used_before", 60.0),
+            ("window", "weekly"),
+        ):
             with self.subTest(field=field):
                 self.assert_fires(
-                    f"withdrawn incident carries a {field}",
-                    **with_observations({**withdrawn, field: "Cleared early."}),
+                    f"withdrawn incident carries {field}",
+                    **with_observations({**withdrawn, field: value}),
                 )
         # Only a retraction is exempt from the verdict allowlist.
         self.assert_fires("published verdict", **with_observations({**withdrawn, "status": "observed"}))

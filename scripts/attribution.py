@@ -236,22 +236,82 @@ def pair_components(pairs: dict[str, str | None]) -> list[tuple[str, ...]]:
     return sorted(tuple(sorted(members)) for members in groups.values())
 
 
+def reverted_at(events: Iterable[Any]) -> dict[str, int | None]:
+    """event_id -> when its clear first reverted, from its retraction records.
+
+    The earliest `reverted_at` on record (the probe stamps the first of the
+    revert reads it needed); None for a retraction that carries no readable
+    time, which nothing downstream may read as "early enough".
+    """
+    found: dict[str, int | None] = {}
+    for event in events:
+        if not isinstance(event, dict) or event.get("kind") != EVENT_RETRACTION:
+            continue
+        event_id = _text(event.get("event_id"))
+        if event_id is None:
+            continue
+        moment = _epoch(event.get("reverted_at"))
+        if event_id not in found:
+            found[event_id] = moment
+        elif found[event_id] is not None and moment is not None:
+            found[event_id] = min(found[event_id], moment)
+        else:
+            # One unreadable record makes the whole answer unreadable: a
+            # guess here decides whether a lone clear's time is published.
+            found[event_id] = None
+    return found
+
+
+def was_live(
+    group: Iterable[str],
+    clears: dict[str, dict[str, Any]],
+    reverted: dict[str, int | None],
+) -> bool:
+    """Did this group ever stand as a pair before a retraction broke it?
+
+    Only if every member's clear was confirmed, and every retracted member
+    reverted strictly AFTER the last member's confirmation. A clear withdrawn
+    before its partner existed never made a pair: grouping with retractions
+    ignored still joins the two, and publishing that group's correction
+    published a lone `unattributed` clear on the other account, which the
+    contract keeps private (privacy review, RetractedBeforeWitness). A time
+    that cannot be read cannot show the order, so it answers no.
+    """
+    confirmed: list[int] = []
+    withdrawn: list[int] = []
+    for event_id in group:
+        clear = clears.get(event_id)
+        moment = _epoch(clear.get("confirmed_at")) if clear and clear.get("confirmed") else None
+        if moment is None:
+            return False
+        confirmed.append(moment)
+        if event_id in reverted:
+            if reverted[event_id] is None:
+                return False
+            withdrawn.append(reverted[event_id])
+    return bool(withdrawn) and min(withdrawn) > max(confirmed)
+
+
 def withdrawn_pairs(events: Iterable[Any]) -> list[tuple[str, ...]]:
-    """The groups the rule formed before a retraction broke them.
+    """The groups the rule formed, stood as pairs, and a retraction then broke.
 
     The same rule run with retractions ignored, minus every group that still
     has a live member: without a retraction the two runs agree, so only a
     withdrawn clear can leave a group here. A member still live means the
     reset still stands on other accounts, and nobody is owed a correction.
+    A group that never stood (was_live) is dropped too: nobody was told about
+    it, and its correction would be the only place its clears appeared.
     """
     records = [event for event in events if isinstance(event, dict)]
     live = set(witnesses(records))
+    clears = latest_clears(records)
+    reverted = reverted_at(records)
     # Every key in a witness map has a witness, and witnessing is symmetric,
     # so each group already holds at least two clears.
     return [
         group
         for group in pair_components(witnesses(records, ignore_retractions=True))
-        if not live.intersection(group)
+        if not live.intersection(group) and was_live(group, clears, reverted)
     ]
 
 

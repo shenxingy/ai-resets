@@ -1029,7 +1029,8 @@ class ProbeFirstFusionTests(unittest.TestCase):
                 "window_minutes": 10080, "used_before": 60.0, "used_after": 0.0,
                 "clear_bracket_lo": at - 60, "clear_bracket_hi": at,
                 "account_fp_before": fp, "account_fp_after": fp,
-                "classification": "unattributed", "confirmed": True, **edit,
+                "classification": "unattributed", "confirmed": True,
+                "confirmed_at": at + 120, **edit,
             }
         return [one("a", "aaaaaaaaaaaa", t), one("b", "bbbbbbbbbbbb", t + gap)]
 
@@ -1118,7 +1119,10 @@ class ProbeFirstFusionTests(unittest.TestCase):
                  account_fp_before="cccccccccccc", account_fp_after="cccccccccccc",
                  detected_at=b["detected_at"] + 60, clear_bracket_hi=b["clear_bracket_hi"] + 60,
                  clear_bracket_lo=b["clear_bracket_lo"] + 60)
-        withdrawn = {"kind": "retraction", "event_id": b["event_id"]}
+        # Withdrawn well after all three stood, so only the third account's
+        # live clear can be what keeps a correction from being written.
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"],
+                     "reverted_at": FUSION_NOW - 3600}
         self.write_probe_log([a, b, c, withdrawn])
         from scripts import attribution, quota_probe as qp
         exported = public_observations(
@@ -1180,7 +1184,8 @@ class ProbeFirstFusionTests(unittest.TestCase):
     def test_a_withdrawn_half_turns_the_incident_into_a_retraction_row(self):
         clears = self.pair(FUSION_NOW - 3 * 3600)
         rows = self.exported(clears)
-        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"]}
+        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
+                     "reverted_at": FUSION_NOW - 3600}
         self.write_probe_log(clears + [withdrawn])
         vendors = {"openai": {"events": [], "observations": []}}
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
@@ -1188,8 +1193,24 @@ class ProbeFirstFusionTests(unittest.TestCase):
         self.assertEqual((row["status"], row["verdict"]), ("retracted", None))
         self.assertEqual(row["incident_key"], f"openai:probe-weekly-{FUSION_NOW - 3 * 3600 - 60}")
         self.assertEqual(row["event_id"], min(r["event_id"] for r in rows if r["account"] == "a"))
-        self.assertNotIn("headline", row)
+        # Exactly what the notifier needs, and what check_site admits: no
+        # clears, labels or times a reader could learn a clear from.
+        from scripts import check_site
+        self.assertEqual(set(row), set(check_site.WITHDRAWN_FIELDS))
         self.assertEqual(build_observations(vendors["openai"]), "")
+
+    def test_a_clear_withdrawn_before_its_partner_cleared_is_never_published(self):
+        # Privacy review, RetractedBeforeWitness: a's clear is taken back
+        # 5 minutes after it happened, and b clears 25 minutes after that.
+        # There was never a pair, so there is nothing to correct, and the old
+        # correction row published b's lone clear with its time and levels.
+        a, b = self.pair(FUSION_NOW - 3 * 3600, gap=1800)
+        withdrawn = {"kind": "retraction", "event_id": a["event_id"],
+                     "reverted_at": a["detected_at"] + 300}
+        self.write_probe_log([a, b, withdrawn])
+        vendors = {"openai": {"events": [], "observations": []}}
+        build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))
+        self.assertEqual(vendors["openai"]["observations"], [])
 
     def test_a_withdrawn_half_is_found_even_when_the_other_read_disagree(self):
         # Claude: the first clear of a pair is written while the other account
@@ -1198,7 +1219,8 @@ class ProbeFirstFusionTests(unittest.TestCase):
         # correction must still go to whoever was mailed about the pair.
         clears = self.pair(FUSION_NOW - 3 * 3600)
         clears[0]["concordance"] = "accounts_disagree"
-        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"]}
+        withdrawn = {"kind": "retraction", "event_id": clears[1]["event_id"],
+                     "reverted_at": FUSION_NOW - 3600}
         self.write_probe_log(clears + [withdrawn])
         vendors = {"openai": {"events": [], "observations": []}}
         build.fuse_incidents(vendors, state_dir=self.state, now=fusion_iso(FUSION_NOW))

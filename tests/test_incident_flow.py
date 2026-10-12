@@ -391,6 +391,41 @@ class CodexTwoAccountFlowTests(FlowCase):
         self.assertIn("No banked credit was spent and the account did not change.", body)
         self.assertEqual({k for k, *_ in self.deliveries()}, {key})
 
+    def test_a_clear_withdrawn_before_the_other_account_cleared_is_nothing_public(self):
+        # Privacy review, RetractedBeforeWitness, through the real detector
+        # and exporter: account a clears and is taken back at T0+300, and
+        # account b clears 30 minutes after a did. No pair ever stood, so the
+        # feed must not carry a correction row holding b's lone clear.
+        def polls(account, account_id, plan, start, before):
+            detector, events = qp.Detector(), []
+            for i in range(3):
+                moment = start + 60 * i
+                result = {
+                    "accountId": account_id,
+                    "rateLimitsByLimitId": {"codex": {
+                        "limitId": "codex", "planType": plan, "secondary": None,
+                        "primary": {
+                            "usedPercent": before if i == 0 else 0, "windowDurationMins": 10080,
+                            "resetsAt": T0 + 3 * DAY if i == 0 else moment + 7 * DAY,
+                        },
+                    }},
+                    "rateLimitResetCredits": {"availableCount": 0, "credits": []},
+                }
+                for row in qp.normalise(result, moment, account):
+                    events += detector.observe(row)
+            return events
+
+        a = polls("a", "placeholder-account-a", "pro", T0, 80)
+        b = polls("b", "placeholder-account-b", "prolite", T0 + 1800, 60)
+        a_clear = next(e for e in a if e.get("kind") == "clear")
+        retraction = {"kind": "retraction", "event_id": a_clear["event_id"],
+                      "reverted_at": T0 + 300, "used_at_revert": 80.0}
+        self.export("openai", a + [retraction] + b)
+        data = self.build(T0 + 1800 + 180 + HOLD)
+        self.assertEqual(self.observations(data, "openai"), [])
+        self.notify(T0 + 1800 + 180 + HOLD)
+        self.assertEqual(self.mails(), [])
+
     def test_both_codex_accounts_at_their_limit_stay_private(self):
         self.export("openai", self.codex_pair_polls(before=(97, 100)))
         data = self.build(T0 + 65 + HOLD)

@@ -43,6 +43,8 @@ def clear(label="a", fp=FP_A, hi=T0, **edit):
         "plan_after": "pro",
         "classification": at.CLASS_UNATTRIBUTED,
         "confirmed": True,
+        # Two idle reads after the clear, as the detector confirms it.
+        "confirmed_at": hi + 120,
     }
     event.update(edit)
     return event
@@ -266,7 +268,7 @@ class GroupTests(unittest.TestCase):
 
     def test_a_broken_pair_is_withdrawn_and_a_standing_one_is_not(self):
         a, b = clear("a", FP_A, T0), clear("b", FP_B, T0 + 60)
-        withdrawn = {"kind": "retraction", "event_id": b["event_id"]}
+        withdrawn = {"kind": "retraction", "event_id": b["event_id"], "reverted_at": T0 + 9000}
         self.assertEqual(at.withdrawn_pairs([a, b]), [])
         self.assertEqual(at.withdrawn_pairs([a, b, withdrawn]),
                          [tuple(sorted((a["event_id"], b["event_id"])))])
@@ -274,7 +276,48 @@ class GroupTests(unittest.TestCase):
         c = clear("c", "cccccccccccc", T0 + 120)
         self.assertEqual(at.withdrawn_pairs([a, b, c, withdrawn]), [])
         # A lone retracted clear was never a pair.
-        self.assertEqual(at.withdrawn_pairs([a, {"kind": "retraction", "event_id": a["event_id"]}]), [])
+        self.assertEqual(at.withdrawn_pairs(
+            [a, {"kind": "retraction", "event_id": a["event_id"], "reverted_at": T0 + 9000}]), [])
+
+    def test_a_clear_withdrawn_before_its_partner_existed_was_never_a_pair(self):
+        # Privacy review, RetractedBeforeWitness: account a cleared and was
+        # taken back five minutes later; account b cleared 30 minutes after
+        # that. Grouped with retractions ignored they join, and the old
+        # correction row then published b's lone clear. Only a group that
+        # stood as a pair before the retraction is withdrawn.
+        a, b = clear("a", FP_A, T0 + 60), clear("b", FP_B, T0 + 1800)
+        def withdrawn(at_):
+            return {"kind": "retraction", "event_id": a["event_id"], "reverted_at": at_}
+        live_from = b["confirmed_at"]
+        for reverted, stood in (
+            (T0 + 300, False),          # before b even cleared
+            (live_from, False),         # the same second b was confirmed: never both
+            (live_from + 1, True),      # one second as a pair is a pair
+            (None, False),              # an unreadable time shows no order
+            ("soon", False),
+        ):
+            with self.subTest(reverted=reverted):
+                self.assertEqual(bool(at.withdrawn_pairs([a, b, withdrawn(reverted)])), stood)
+
+    def test_every_member_s_confirmation_must_be_on_record(self):
+        a, b = clear("a", FP_A, T0), clear("b", FP_B, T0 + 60)
+        retraction = {"kind": "retraction", "event_id": b["event_id"], "reverted_at": T0 + 9000}
+        for edit in ({"confirmed_at": None}, {"confirmed_at": "late"}, {"confirmed_at": True}):
+            with self.subTest(edit=edit):
+                self.assertEqual(at.withdrawn_pairs([dict(a, **edit), b, retraction]), [])
+
+    def test_the_earliest_revert_on_record_is_the_one_judged(self):
+        a, b = clear("a", FP_A, T0), clear("b", FP_B, T0 + 1800)
+        late = {"kind": "retraction", "event_id": a["event_id"], "reverted_at": T0 + 9000}
+        early = dict(late, reverted_at=T0 + 300)
+        unread = dict(late, reverted_at=None)
+        self.assertTrue(at.withdrawn_pairs([a, b, late]))
+        for records in ([a, b, late, early], [a, b, early, late], [a, b, late, unread],
+                        [a, b, unread, late]):
+            with self.subTest(order=[r.get("reverted_at") for r in records[2:]]):
+                self.assertEqual(at.withdrawn_pairs(records), [])
+        self.assertEqual(at.reverted_at([late, {"kind": "retraction"}, "junk", a]),
+                         {a["event_id"]: T0 + 9000})
 
 
 class StampTests(unittest.TestCase):
