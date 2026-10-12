@@ -356,7 +356,7 @@ def _epoch(value: Any) -> int | None:
 
 
 def incident_key(event: dict[str, Any]) -> str:
-    """The dedupe unit: `<vendor>:<post id>`, or `<vendor>:probe-<slot>-<lo>`.
+    """The dedupe unit: `<vendor>:<post id>`, or `<vendor>:probe-<window>-<lo>`.
 
     A fused row states its own key and it is returned unchanged; deciding which
     observation belongs to which post is the fusion layer's job, not the

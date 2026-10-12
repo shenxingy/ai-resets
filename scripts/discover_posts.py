@@ -766,8 +766,9 @@ def extract_post_text(body: str, handle: str) -> str:
     """Best-effort read of the quoted post out of a notification body.
 
     Honest about its status: the exact layout of an X "posted" notification is
-    a HYPOTHESIS here. The owner has not yet forwarded a real one (it is an
-    open item in docs/robustness-plan.md), so this keeps only what is
+    a HYPOTHESIS here. The owner has not forwarded a real one (the request
+    was parked with the IMAP channel on 2026-10-11; docs/reset-attribution.md,
+    "Not in scope"), so this keeps only what is
     structurally safe — drop URLs, drop the wrapper's own furniture, drop the
     "Name (@handle)" line — and takes the first surviving block. The status ID
     is the load-bearing part of an IMAP hint; the text is a preview, and P1

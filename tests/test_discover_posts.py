@@ -7,8 +7,9 @@ whole phase exists for: 2026-09-01T18:35:27Z, "With Fable 5.1 out today, we've
 also reset 5-hour and weekly limits for all users.", which no channel this
 project had caught.
 
-The RFC822 fixture below is NOT a capture. The owner has not yet forwarded a
-real X notification (an open item in docs/robustness-plan.md), so it is a
+The RFC822 fixture below is NOT a capture. The owner has not forwarded a real
+X notification (parked with the IMAP channel on 2026-10-11;
+docs/reset-attribution.md, "Not in scope"), so it is a
 reconstruction, and the tests are written to pin down what the parser must
 never do — invent an id, trust a stranger's envelope, leak a password — rather
 than to bless one layout as the truth.
