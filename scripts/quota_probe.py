@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ground-truth reset detector: watch this account's real Codex quota.
+"""Ground-truth reset detector: watch our Codex accounts' real quota.
 
 The tweet feed is a single, semantically unreliable source — 12 of 48 tracked
 announcements are forecasts ("lands in the next hour", "in the next few
@@ -55,6 +55,14 @@ Detection rests on four measured facts about the Codex weekly window:
    `unattributed` clear becomes the vendor's only in scripts/attribution.py,
    when a second account of ours cleared the same window within the hour.
 
+6. That second account is read here too, when AI_RESETS_CODEX_HOME_B names
+   its home: a separate Pro Lite account that cleared with this one on
+   2026-10-02 and 10-11 and stayed put on 10-04 and 10-10, when this one
+   spent its own credits. It is account `b`: its limit ids carry a `b:`
+   prefix, its health block is `codex:b`, and its app-server child is given
+   its home explicitly. Account a's ids, cursor slots and event ids are the
+   ones it has always had, and a failure on b never blinds a.
+
 The probe can also stop seeing anything at all: the RPC returned HTTP 404 for
 35 consecutive polls on 2026-09-03 (10:43-11:17 EDT) and nothing alerted. So
 every iteration writes probe_health.json — the file, not a cursor mtime, is
@@ -88,7 +96,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -112,9 +120,15 @@ CURSOR_FILE = STATE_DIR / "quota_cursor.json"
 HEALTH_FILE = STATE_DIR / "probe_health.json"
 PROBE_LABEL = "codex"
 # The account label written on every row: `a` and `b` are the only names an
-# account is ever given (docs/reset-attribution.md). This probe reads the one
-# Codex home its unit points at, which is account `a`.
+# account is ever given (docs/reset-attribution.md). Account `a` is the Codex
+# home the unit hands this process as CODEX_HOME; account `b` is the second,
+# independent ChatGPT account under AI_RESETS_CODEX_HOME_B, when one is set.
 ACCOUNT_LABEL = "a"
+SECOND_ACCOUNT_LABEL = "b"
+# One health block per account. `codex` stays account a's, so every reader
+# written before the second account existed keeps reading the block it always
+# read; the second account's outage is its own block and its own owner alert.
+HEALTH_LABELS = {ACCOUNT_LABEL: PROBE_LABEL, SECOND_ACCOUNT_LABEL: f"{PROBE_LABEL}:b"}
 
 # An account or credit id is recorded as the first 12 hex digits of a
 # namespaced sha256 and never as itself: enough to tell two accounts apart,
@@ -128,6 +142,15 @@ APP_SERVER_TIMEOUT = float(os.environ.get("AI_RESETS_RPC_TIMEOUT", "25"))
 # under systemd does not include ~/.local/bin at all. Point at the real
 # binary explicitly so the service does not depend on either.
 CODEX_BIN = os.environ.get("AI_RESETS_CODEX_BIN", "codex")
+
+# The second account's Codex home, or empty when there is none. It is the one
+# measured discriminator between the owner's reset and the vendor's: this
+# Pro Lite account cleared with the Pro account on 2026-10-02 and 10-11 (the
+# vendor) and sat still on 10-04 and 10-10 (the Pro account's own credits).
+# Its home is set in its OWN child's environment only, never in this
+# process's, so a read of account b can never move account a, and a CODEX_HOME
+# that leaked in from a login shell can never move account b.
+CODEX_HOME_B = os.environ.get("AI_RESETS_CODEX_HOME_B", "")
 
 # A clear is a drop of at least this many points that lands at or below the
 # floor. Both bounds matter: the floor alone would fire on a window that was
@@ -313,12 +336,29 @@ def _rpc_messages() -> list[dict[str, Any]]:
     ]
 
 
-def read_rate_limits(timeout: float = APP_SERVER_TIMEOUT) -> dict[str, Any]:
+def codex_environment(codex_home: str | None) -> dict[str, str] | None:
+    """The app-server child's environment: inherited, or with its own home.
+
+    None, for account a, inherits this process's environment unchanged: its
+    CODEX_HOME is the one the unit pins (2904b8a), and its reads stay exactly
+    what they were before a second account existed. A home, for account b, is
+    set in the CHILD's copy only, so this process — and every later read of
+    account a — never sees it.
+    """
+    if codex_home is None:
+        return None
+    return {**os.environ, "CODEX_HOME": codex_home}
+
+
+def read_rate_limits(
+    timeout: float = APP_SERVER_TIMEOUT, *, codex_home: str | None = None
+) -> dict[str, Any]:
     """Read an authenticated quota snapshot via `codex app-server --stdio`.
 
     Credentials stay inside the Codex binary; nothing here reads auth.json.
     The call is metadata-only: it consumes no model tokens and, per Codex's
-    own tooling contract, no rate-limit reset credit.
+    own tooling contract, no rate-limit reset credit. `codex_home` points the
+    child at another account's home (codex_environment).
 
     stdin is deliberately held open — closing it makes the server exit before
     it answers.
@@ -331,6 +371,7 @@ def read_rate_limits(timeout: float = APP_SERVER_TIMEOUT) -> dict[str, Any]:
             stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
+            env=codex_environment(codex_home),
         )
     except (FileNotFoundError, PermissionError) as exc:
         raise ProbeError(f"cannot execute the Codex CLI at {CODEX_BIN!r}") from exc
@@ -375,6 +416,13 @@ def read_rate_limits(timeout: float = APP_SERVER_TIMEOUT) -> dict[str, Any]:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2)
+        # Two children a poll now, every minute for months: close their pipes
+        # here rather than whenever the collector gets to them.
+        for stream in (process.stdin, process.stdout):
+            try:
+                stream.close()
+            except OSError:
+                pass
 
 
 # ─── Snapshot normalisation ──────────────────────────────────────────────────
@@ -446,7 +494,20 @@ def credit_details(result: dict[str, Any]) -> list[dict[str, Any]] | None:
     return sorted(details, key=lambda credit: credit["id"])
 
 
-def normalise(result: dict[str, Any], now: int) -> list[dict[str, Any]]:
+def limit_prefix(account: str) -> str:
+    """`b:` before the second account's limit ids, nothing before account a's.
+
+    Account a keeps the ids it has always had, so its slot keys, its cursor,
+    its event ids and every incident key built from them carry on unchanged
+    (docs/reset-attribution.md, "Second Codex account"). window_family()
+    strips the prefix again, so the two accounts' clears can still be paired.
+    """
+    return "" if account == ACCOUNT_LABEL else f"{account}:"
+
+
+def normalise(
+    result: dict[str, Any], now: int, account: str = ACCOUNT_LABEL
+) -> list[dict[str, Any]]:
     """Flatten the RPC result into one row per (limit_id, window) slot.
 
     Every row also says WHOSE quota it is and what was in the bank, because a
@@ -462,6 +523,7 @@ def normalise(result: dict[str, Any], now: int) -> list[dict[str, Any]]:
     bank = credits_available(result)
     account_fp = account_fingerprint(result.get("accountId"))
     credit_ids = credit_details(result)
+    prefix = limit_prefix(account)
     rows: list[dict[str, Any]] = []
     for limit_id, limit in sorted(by_id.items()):
         if not isinstance(limit, dict):
@@ -477,14 +539,14 @@ def normalise(result: dict[str, Any], now: int) -> list[dict[str, Any]]:
             rows.append(
                 {
                     "t": now,
-                    "limit_id": limit_id,
+                    "limit_id": f"{prefix}{limit_id}",
                     "slot": slot,
                     "window_minutes": minutes,
                     "used_percent": float(used),
                     "resets_at": window.get("resetsAt"),
                     "plan_type": limit.get("planType"),
                     "credits_available": bank,
-                    "account": ACCOUNT_LABEL,
+                    "account": account,
                     "account_fp": account_fp,
                     "credit_ids": None if credit_ids is None else list(credit_ids),
                 }
@@ -494,6 +556,30 @@ def normalise(result: dict[str, Any], now: int) -> list[dict[str, Any]]:
 
 def slot_key(row: dict[str, Any]) -> str:
     return f"{row['limit_id']}/{row['window_minutes']}"
+
+
+def account_of_slot(key: Any) -> str:
+    """Which account a Codex slot key belongs to: `b` for `b:codex/10080`.
+
+    Every other key is account a's, including every key written before the
+    second account existed: those carry no prefix, and that is what keeps
+    them account a's without rewriting a cursor or a log.
+    """
+    if isinstance(key, str) and key.startswith(limit_prefix(SECOND_ACCOUNT_LABEL)):
+        return SECOND_ACCOUNT_LABEL
+    return ACCOUNT_LABEL
+
+
+def record_account(record: dict[str, Any]) -> str:
+    """The account a record is about: its own label, else its slot's.
+
+    Records written before rows were labelled — every one of them account
+    a's — carry no `account`; their slot key still says whose they are.
+    """
+    account = record.get("account")
+    if isinstance(account, str) and account:
+        return account
+    return account_of_slot(record.get("slot"))
 
 
 # ─── Detection ───────────────────────────────────────────────────────────────
@@ -980,12 +1066,13 @@ class Detector:
     def cursor(self) -> dict[str, Any]:
         return {"slots": self.slots}
 
-    def last_sample_t(self) -> int | None:
-        """Timestamp of the newest normalised row across every slot."""
+    def last_sample_t(self, keep: Callable[[str], bool] | None = None) -> int | None:
+        """Timestamp of the newest normalised row across every slot `keep` admits."""
         times = [
             state["last"]["t"]
-            for state in self.slots.values()
-            if isinstance(state.get("last"), dict)
+            for key, state in self.slots.items()
+            if (keep is None or keep(key))
+            and isinstance(state.get("last"), dict)
             and isinstance(state["last"].get("t"), int)
         ]
         return max(times) if times else None
@@ -1296,6 +1383,9 @@ class Detector:
                 "kind": EVENT_CREDIT_GRANTED,
                 "slot": key,
                 "limit_id": row["limit_id"],
+                # Whose bank: a grant lands in each account's bank separately,
+                # and the email quotes account a's alone (groundtruth).
+                "account": row.get("account"),
                 "t": row["t"],
                 "credits_before": previous_count,
                 "credits_after": credit,
@@ -1405,9 +1495,14 @@ def write_health(entry: dict[str, Any], label: str = PROBE_LABEL) -> None:
     The temp file is named per label so a second probe writing its own block
     concurrently cannot land on ours mid-write.
     """
+    health = load_health()
+    health[label] = entry
+    _replace_health(health, label)
+
+
+def _replace_health(health: dict[str, Any], label: str) -> None:
+    """Write the whole file atomically, through a temp file named for `label`."""
     try:
-        health = load_health()
-        health[label] = entry
         HEALTH_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = HEALTH_FILE.with_name(f"{HEALTH_FILE.name}.{label}.tmp")
         tmp.write_text(json.dumps(health, separators=(",", ":")), encoding="utf-8")
@@ -1431,13 +1526,23 @@ def health_block(
     blind_since: int | None = None,
     last_error: str | None = None,
     label: str = PROBE_LABEL,
+    account: str | None = None,
 ) -> dict[str, Any]:
-    """One probe's health, in the shape every reader of the file expects."""
+    """One probe's health, in the shape every reader of the file expects.
+
+    `account` limits the block to that Codex account's slots. Both accounts
+    share one detector, and account a's block reporting b's windows as
+    readable would let a blind account a pass for one that could have seen a
+    reset. None keeps every slot, for a probe with a single account.
+    """
+    def keep(key: str) -> bool:
+        return account is None or account_of_slot(key) == account
+
     return {
         "label": label,
         "updated_at": now,
         "last_ok_at": last_ok_at,
-        "last_sample_t": detector.last_sample_t(),
+        "last_sample_t": detector.last_sample_t(keep),
         "consecutive_failures": consecutive_failures,
         "blind_since": blind_since,
         # Reserved for the Claude probe (P2), which throttles per token at
@@ -1445,9 +1550,24 @@ def health_block(
         # that expires. Neither can happen to a local `codex app-server` call.
         "throttled_until": None,
         "token_stale": False,
-        "detectable_now": detector.detectable_now(),
+        "detectable_now": {
+            key: value for key, value in detector.detectable_now().items() if keep(key)
+        },
         "last_error": last_error,
     }
+
+
+def drop_health(label: str) -> None:
+    """Remove one label's block, keeping every other probe's.
+
+    For an account this probe no longer reads. Its last block would otherwise
+    go stale and stay that way: blind on the site and an open owner alert for
+    a second account that was taken out on purpose.
+    """
+    health = load_health()
+    if label in health:
+        del health[label]
+        _replace_health(health, label)
 
 
 def resume_health(label: str = PROBE_LABEL) -> tuple[int | None, int | None]:
@@ -1668,19 +1788,54 @@ def health_for_export(label: str = PROBE_LABEL) -> dict[str, Any]:
     entry = load_health().get(label)
     if isinstance(entry, dict):
         return entry
-    detector = Detector(load_cursor())
+    # Only this label's own account's slots: the cursor holds both accounts'.
+    account = next((acct for acct, name in HEALTH_LABELS.items() if name == label), None)
+    seen = health_block(Detector(load_cursor()), 0, label=label, account=account)
     return {
-        "label": label,
+        **seen,
         "updated_at": None,
         "last_ok_at": None,
-        "last_sample_t": detector.last_sample_t(),
         "consecutive_failures": None,
-        "blind_since": None,
-        "throttled_until": None,
-        "token_stale": False,
-        "detectable_now": detector.detectable_now(),
         "last_error": f"no {HEALTH_FILE.name} on disk; state read from the cursor",
     }
+
+
+def exported_accounts(health: dict[str, Any]) -> list[str]:
+    """The accounts the export speaks for: account a, and b while it is read.
+
+    Read off the health file, never the environment: the export runs from the
+    publish pipeline, which is not the probe's unit and carries none of its
+    variables. Account b's block exists exactly while the probe reads it
+    (account_pollers drops it when b is taken out), so its history alone, left
+    in the sample log, cannot keep claiming a second account.
+    """
+    accounts = [ACCOUNT_LABEL]
+    if isinstance(health.get(HEALTH_LABELS[SECOND_ACCOUNT_LABEL]), dict):
+        accounts.append(SECOND_ACCOUNT_LABEL)
+    return accounts
+
+
+def export_status(entries: list[dict[str, Any]], now: int) -> tuple[str, int | None]:
+    """(status, last_verified_at) across every account the export speaks for.
+
+    Healthy only when every account is: a blind account b cannot be rendered
+    as a clean look, because a vendor reset needs b's clear as its witness.
+    `last_verified_at` is the OLDEST success, so the freshness badge can never
+    be fresher than the stalest account behind it, and it is None while any
+    account has never read at all. The same rule the Claude export applies to
+    its two accounts.
+    """
+    statuses = [probe_status(entry, now) for entry in entries]
+    verified = [
+        moment for moment in (_epoch(entry.get("last_ok_at")) for entry in entries)
+        if moment is not None
+    ]
+    oldest = min(verified) if verified and len(verified) == len(entries) else None
+    if all(status == PROBE_ABSENT for status in statuses):
+        return PROBE_ABSENT, oldest
+    if any(status != PROBE_OK for status in statuses):
+        return PROBE_BLIND, oldest
+    return PROBE_OK, oldest
 
 
 # ─── Publishable words ───────────────────────────────────────────────────────
@@ -1853,6 +2008,12 @@ def account_change_sentences(event: dict[str, Any], window: str) -> tuple[str, s
     )
 
 
+def account_suffix(event: dict[str, Any]) -> str:
+    """` on account b` for a record of a second account, nothing for account a's."""
+    account = record_account(event)
+    return "" if account == ACCOUNT_LABEL else f" on account {account}"
+
+
 def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[str, str]:
     """The headline and the evidence line, built from fields and nothing else.
 
@@ -1863,6 +2024,11 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
     is never written, because one account on one plan tier cannot say that.
     """
     window = f"{PRODUCT} {window_name(window_minutes_of(event))}"
+    # Account a's sentences read as they always have; account b's say whose
+    # window it is, since both accounts' rows sit side by side on the page.
+    suffix = account_suffix(event)
+    ours = f"our {window} window{suffix}"
+    ours_cap = f"O{ours[1:]}"
     change = f"{_percent(event.get('used_before'))} to {_percent(event.get('used_after'))}"
     lo, hi = pacific(event.get("clear_bracket_lo")), pacific(event.get("clear_bracket_hi"))
     hi = hi or pacific(event.get("detected_at"))
@@ -1880,7 +2046,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         moment = "at a time we never recorded"
 
     if event.get("kind") == EVENT_RETRACTION:
-        headline = f"A clear we recorded on our {window} window did not hold; we withdrew it."
+        headline = f"A clear we recorded on {ours} did not hold; we withdrew it."
         returned = event.get("used_at_revert")
         when = pacific(event.get("reverted_at"))
         if isinstance(returned, (int, float)) and not isinstance(returned, bool) and when:
@@ -1919,17 +2085,17 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         return (
             "A banked reset credit arrived in this account's bank.",
             f"The banked credit count went from {before_credits} to {after_credits} at "
-            f"{pacific(event.get('t')) or 'a time we never recorded'}. Our {window} "
-            "window did not move, so this is a credit for the account holder to spend, "
+            f"{pacific(event.get('t')) or 'a time we never recorded'}. {ours_cap} "
+            "did not move, so this is a credit for the account holder to spend, "
             "not a reset.",
         )
 
     if verdict == VERDICT_ACCOUNT_CHANGE:
-        return account_change_sentences(event, f"our {window} window")
+        return account_change_sentences(event, ours)
 
     if verdict == VERDICT_LIMIT_CHANGE:
         return (
-            f"The size of our {window} limit changed.",
+            f"The size of our {window} limit{suffix} changed.",
             f"The counter went {change} {moment} with the expiry time and the banked "
             "credit count untouched, which is the limit itself being rescaled rather "
             "than the window clearing.",
@@ -1937,7 +2103,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
 
     if verdict == VERDICT_NATURAL_EXPIRY:
         return (
-            f"Our {window} window reached its scheduled expiry.",
+            f"{ours_cap} reached its scheduled expiry.",
             f"{change} {moment}. The expiry time already on record was {anchor}, so this "
             "is our own window reaching the end it was scheduled for, not an extra reset.",
         )
@@ -1970,7 +2136,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
                 "this account's own credit cannot be ruled out"
             )
         return (
-            f"Our {window} window cleared {early} early; the cause is unverified.",
+            f"{ours_cap} cleared {early} early; the cause is unverified.",
             f"{change} {moment}, {gap}; {bank}. Personal reset use cannot be ruled "
             "out. This is not evidence of a provider-wide reset.",
         )
@@ -1979,7 +2145,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
         # Reachable only through scripts/attribution.py: VERDICT_OF_CLASS maps
         # no class to this verdict, so one account can never produce it.
         return (
-            f"Our {window} window cleared {early} early, and so did a second "
+            f"{ours_cap} cleared {early} early, and so did a second "
             "account of ours.",
             f"{change} {moment}, {gap}; {checked_clause(event)}, and the banked credit "
             f"count read {before_credits} then {after_credits} with no credit leaving "
@@ -1988,7 +2154,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
 
     if verdict == VERDICT_UNATTRIBUTED:
         return (
-            f"Our {window} window cleared {early} early, with no cause on our side "
+            f"{ours_cap} cleared {early} early, with no cause on our side "
             "that this probe can see.",
             f"{change} {moment}, {gap}; {checked_clause(event)}, and the banked credit "
             f"count read {before_credits} then {after_credits} with no credit leaving "
@@ -1998,7 +2164,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
 
     if verdict == VERDICT_SELF_APPLIED:
         return (
-            f"Our {window} window cleared {early} early with possible personal "
+            f"{ours_cap} cleared {early} early with possible personal "
             "reset-credit use.",
             f"{change} {moment}, {gap}; the banked credit count fell from "
             f"{before_credits} to {after_credits} across the clear, so this account's "
@@ -2007,7 +2173,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
 
     if verdict == VERDICT_UNRESOLVED:
         return (
-            f"Our {window} window cleared, but we cannot say whether it was a reset.",
+            f"{ours_cap} cleared, but we cannot say whether it was a reset.",
             f"{change} {moment}. No scheduled-expiry time was on record for this window, "
             "so a natural expiry cannot be ruled out.",
         )
@@ -2015,7 +2181,7 @@ def observation_sentences(event: dict[str, Any], verdict: str | None) -> tuple[s
     # No verdict: a record this exporter does not recognise. Say that, rather
     # than reaching for the nearest verdict — every one of them is a claim.
     return (
-        f"Our {window} window recorded something this exporter cannot classify.",
+        f"{ours_cap} recorded something this exporter cannot classify.",
         "The probe wrote a record in a shape this export does not recognise, so nothing "
         "is claimed about it.",
     )
@@ -2087,6 +2253,21 @@ def observation(event: dict[str, Any], retracted_ids: set[str]) -> dict[str, Any
 def slot_history(path: Path) -> tuple[dict[str, float], int | None, dict[str, int]]:
     """(peak used_percent per slot, oldest sample time, samples per slot).
 
+    The oldest of sample_history's per-slot first readings; see there.
+    """
+    peaks, counts, firsts = sample_history(path)
+    return peaks, (min(firsts.values()) if firsts else None), counts
+
+
+def sample_history(
+    path: Path,
+) -> tuple[dict[str, float], dict[str, int], dict[str, int]]:
+    """(peak used_percent, samples, first sample time), each per slot.
+
+    The first time is per slot because accounts start apart: a second account
+    added in October must not be described as read "since Aug 30", the date
+    the first account's log begins.
+
     The sample count matters as much as the peak. An idle window writes no row
     at all — changed_rows() only records movement — so 141 hours of wall clock
     can hold 58 samples, and "has read 0% since Aug 30" would imply a
@@ -2099,7 +2280,7 @@ def slot_history(path: Path) -> tuple[dict[str, float], int | None, dict[str, in
     """
     peaks: dict[str, float] = {}
     counts: dict[str, int] = {}
-    first: int | None = None
+    firsts: dict[str, int] = {}
     try:
         with path.open(encoding="utf-8") as handle:
             for line in handle:
@@ -2116,21 +2297,63 @@ def slot_history(path: Path) -> tuple[dict[str, float], int | None, dict[str, in
                 peaks[key] = max(peaks.get(key, 0.0), float(used))
                 counts[key] = counts.get(key, 0) + 1
                 moment = _epoch(row.get("t"))
-                if moment is not None and (first is None or moment < first):
-                    first = moment
+                if moment is not None and (key not in firsts or moment < firsts[key]):
+                    firsts[key] = moment
     except OSError:
-        return {}, None, {}
-    return peaks, first, counts
+        return {}, {}, {}
+    return peaks, counts, firsts
 
 
-def plan_type_from_cursor() -> str | None:
-    """The plan the probed account is on, as the RPC reported it."""
-    for state in Detector(load_cursor()).slots.values():
-        last = state.get("last")
-        plan = last.get("plan_type") if isinstance(last, dict) else None
-        if isinstance(plan, str) and plan:
-            return plan
-    return None
+def account_plans(detector: Detector) -> dict[str, str | None]:
+    """Each account's plan as of its NEWEST row in the cursor.
+
+    Per account, because the two hold different plans (Pro and Pro Lite), and
+    newest rather than first-found, because a slot the RPC stopped reporting
+    keeps the plan it last read.
+    """
+    newest: dict[str, tuple[int, str | None]] = {}
+    for key, state in detector.slots.items():
+        last = state.get("last") if isinstance(state, dict) else None
+        if not isinstance(last, dict) or not isinstance(last.get("t"), int):
+            continue
+        account = account_of_slot(key)
+        plan = last.get("plan_type")
+        plan = plan if isinstance(plan, str) and plan else None
+        if account not in newest or last["t"] > newest[account][0]:
+            newest[account] = (last["t"], plan)
+    return {account: plan for account, (_, plan) in newest.items()}
+
+
+# How a reader names a Codex planType. Anything else is printed capitalised,
+# as the sentence always has: `pro` -> `Pro`.
+PLAN_NAMES = {"prolite": "Pro Lite"}
+NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three"}
+
+
+def plan_name(plan: Any) -> str | None:
+    """`Pro` / `Pro Lite` for a planType, or None when none was read."""
+    if not isinstance(plan, str) or not plan:
+        return None
+    return PLAN_NAMES.get(plan.lower(), plan.capitalize())
+
+
+def population_phrase(plans: dict[str, Any]) -> str:
+    """`One Codex Pro account` / `Two Codex accounts (Pro and Pro Lite)`.
+
+    Derived from what each account last read. With more than one, a plan is
+    named only when EVERY account's was read: half a description would read
+    as the whole one. Never a name, an email or an id.
+    """
+    names = [plan_name(plan) for plan in plans.values()]
+    if len(names) == 1:
+        return f"One {PRODUCT} {names[0]} account" if names[0] else f"One {PRODUCT} account"
+    number = NUMBER_WORDS.get(len(names), str(len(names)))
+    if not all(names):
+        return f"{number} {PRODUCT} accounts"
+    distinct = list(dict.fromkeys(names))
+    if len(distinct) == 1:
+        return f"{number} {PRODUCT} {distinct[0]} accounts"
+    return f"{number} {PRODUCT} accounts ({' and '.join(distinct)})"
 
 
 def _windows(names: list[str]) -> tuple[str, str, str]:
@@ -2144,55 +2367,143 @@ def coverage_sentence(
     first_sample_t: int | None,
     plan_type: str | None,
     counts: dict[str, int] | None = None,
+    *,
+    others: dict[str, str | None] | None = None,
+    firsts: dict[str, int] | None = None,
 ) -> str:
     """One honest sentence naming the population this probe speaks for.
 
     Never "we saw no reset": what this says is which windows carry enough usage
     that a reset would have been visible at all, and which have never carried
     any, so a reader can tell silence from evidence.
+
+    `plan_type` is account a's plan. `others` maps each further account the
+    export speaks for (`b`) to its plan, and `firsts` gives each slot's first
+    sample time. With a second account, a window one account fills and the
+    other never does is named per account: a vendor reset needs both to clear,
+    so the quiet account's silence must not hide behind the busy one's peak.
     """
-    account = f"One {PRODUCT} account"
-    if plan_type:
-        account = f"One {PRODUCT} {plan_type.capitalize()} account"
+    plans: dict[str, str | None] = {ACCOUNT_LABEL: plan_type, **(others or {})}
+    population = population_phrase(plans)
     if not peaks:
-        return f"{account}. No samples are on record on this host, so nothing can be observed."
+        return f"{population}. No samples are on record on this host, so nothing can be observed."
 
     counts = counts or {}
+    firsts = firsts or {}
     by_window: dict[str, float] = {}
     by_window_samples: dict[str, int] = {}
+    # (account, window name) -> [peak, samples, first sample time]
+    by_account: dict[tuple[str, str], list[Any]] = {}
     for key, peak in peaks.items():
         name = window_name(window_minutes_of({"slot": key}))
         by_window[name] = max(by_window.get(name, 0.0), peak)
         by_window_samples[name] = by_window_samples.get(name, 0) + counts.get(key, 0)
+        seen = by_account.setdefault((account_of_slot(key), name), [0.0, 0, None])
+        seen[0] = max(seen[0], peak)
+        seen[1] += counts.get(key, 0)
+        moment = firsts.get(key)
+        if isinstance(moment, int) and (seen[2] is None or moment < seen[2]):
+            seen[2] = moment
     since = f" since {format_epoch_pacific(first_sample_t)}" if first_sample_t else ""
 
     active = sorted(name for name, peak in by_window.items() if peak >= CLEAR_DROP_MIN)
     quiet = sorted(name for name, peak in by_window.items() if peak < CLEAR_DROP_MIN)
     if not active:
         return (
-            f"{account}. No window has carried more than {max(by_window.values()):g}% of "
+            f"{population}. No window has carried more than {max(by_window.values()):g}% of "
             f"its limit{since}, under the {CLEAR_DROP_MIN:g}-point drop a clear needs, so "
             "nothing can be observed yet."
         )
 
     joined, noun, _ = _windows(active)
-    head = f"{account}, {joined} {noun} only."
-    if not quiet:
-        return head
-    joined, noun, verb = _windows(quiet)
-    peak = max(by_window[name] for name in quiet)
-    samples = sum(by_window_samples.get(name, 0) for name in quiet)
-    # "since <date>" alone would imply continuous watching. An idle window
-    # writes no sample at all, so state how many readings the claim rests on.
-    seen = f" on all {samples} readings taken{since}" if samples else since
-    if peak <= 0:
-        tail = f"The {joined} {noun} {verb} read 0%{seen}"
-    else:
-        tail = (
-            f"The {joined} {noun} {verb} never read above {peak:g}%{seen}, under the "
-            f"{CLEAR_DROP_MIN:g}-point drop a clear needs"
-        )
-    return f"{head} {tail}, so nothing can be observed on it."
+    parts = [f"{population}, {joined} {noun} only."]
+    if quiet:
+        joined, noun, verb = _windows(quiet)
+        peak = max(by_window[name] for name in quiet)
+        samples = sum(by_window_samples.get(name, 0) for name in quiet)
+        # "since <date>" alone would imply continuous watching. An idle window
+        # writes no sample at all, so state how many readings the claim rests on.
+        seen_on = readings_taken(samples, since)
+        if peak <= 0:
+            tail = f"The {joined} {noun} {verb} read 0%{seen_on}"
+        else:
+            tail = (
+                f"The {joined} {noun} {verb} never read above {peak:g}%{seen_on}, under "
+                f"the {CLEAR_DROP_MIN:g}-point drop a clear needs"
+            )
+        parts.append(f"{tail}, so nothing can be observed on it.")
+    if len(plans) > 1:
+        parts.extend(account_gaps(plans, active, by_account))
+    return " ".join(parts)
+
+
+def readings_taken(samples: int, since: str) -> str:
+    """` on all 59 readings taken since …`; one reading is not "all 1"."""
+    if not samples:
+        return since
+    if samples == 1:
+        return f" on the one reading taken{since}"
+    return f" on all {samples} readings taken{since}"
+
+
+def account_gaps(
+    plans: dict[str, Any],
+    active: list[str],
+    by_account: dict[tuple[str, str], list[Any]],
+) -> list[str]:
+    """A sentence for each account that cannot show a clear on an active window.
+
+    "Weekly window only" is true of the pair while account b's weekly window
+    has never carried usage, and then no clear of b's can witness anything.
+    """
+    gaps = []
+    for account in plans:
+        if not any(owner == account for owner, _ in by_account):
+            gaps.append(
+                f"Account {account} has no samples on record, so nothing can be "
+                "observed on it."
+            )
+            continue
+        for name in active:
+            seen = by_account.get((account, name))
+            if seen is None:
+                gaps.append(
+                    f"Account {account} has no {name} samples on record, so nothing can "
+                    "be observed on that window."
+                )
+                continue
+            peak, samples, first = seen
+            if peak >= CLEAR_DROP_MIN:
+                continue
+            since = f" since {format_epoch_pacific(first)}" if first else ""
+            read = readings_taken(samples, since)
+            gaps.append(
+                f"Account {account}'s {name} window has never read above {peak:g}%{read}, "
+                f"under the {CLEAR_DROP_MIN:g}-point drop a clear needs, so nothing can be "
+                "observed on it."
+            )
+    return gaps
+
+
+def export_coverage(accounts: list[str]) -> str:
+    """The coverage sentence for exactly the accounts the export speaks for.
+
+    Read from the sample log and the cursor, restricted to those accounts'
+    slots: account b's history stays in the log after it is taken out, and
+    must not keep describing a second account the probe no longer reads.
+    """
+    peaks, counts, firsts = sample_history(SAMPLES_FILE)
+    keep = {key for key in peaks if account_of_slot(key) in accounts}
+    firsts = {key: moment for key, moment in firsts.items() if key in keep}
+    plans = account_plans(Detector(load_cursor()))
+    return coverage_sentence(
+        {key: peaks[key] for key in keep},
+        min(firsts.values()) if firsts else None,
+        plans.get(ACCOUNT_LABEL),
+        {key: counts[key] for key in keep if key in counts},
+        others={account: plans.get(account) for account in accounts[1:]},
+        firsts=firsts,
+    )
 
 
 def probe_status(health: dict[str, Any], now: int) -> str:
@@ -2232,7 +2543,9 @@ def collapse_key(event: dict[str, Any]) -> str:
     kind = event.get("kind")
     moment = _epoch(event.get("detected_at") or event.get("t"))
     if kind == EVENT_CREDIT_GRANTED:
-        return f"{kind}:{moment}"
+        # Per account: each holds its own bank, and two grants read in the
+        # same second are still two banks filling.
+        return f"{kind}:{record_account(event)}:{moment}"
     if kind == EVENT_ACCOUNT_CHANGE:
         # One login is seen on every slot of that account at the same read.
         return f"{kind}:{event.get('account')}:{moment}"
@@ -2247,7 +2560,9 @@ def export_observations(
 
     On-disk state only: no RPC, no network, nothing that can hang. The file
     lands in the gitignored data/observed/ directory, never beside the tracked
-    data/<vendor>.json seeds, which build.py would clobber.
+    data/<vendor>.json seeds, which build.py would clobber. Both accounts'
+    records come from the one event log, and the probe block speaks for every
+    account the probe reads (exported_accounts).
 
     This is the export boundary. The internal CLASS_* names stop here and the
     published vocabulary starts, and each observation carries the two sentences
@@ -2281,22 +2596,36 @@ def export_observations(
         observations.append(observation(event, retracted))
 
     health = health_for_export(label)
-    peaks, first_sample_t, sample_counts = slot_history(SAMPLES_FILE)
+    on_disk = load_health()
+    accounts = exported_accounts(on_disk)
+    entries = {ACCOUNT_LABEL: health}
+    for account in accounts[1:]:
+        entries[account] = on_disk[HEALTH_LABELS[account]]
+    status, verified_at = export_status(list(entries.values()), now)
+    detectable: dict[str, Any] = {}
+    for entry in entries.values():
+        detectable.update(entry.get("detectable_now") or {})
     payload = {
         "vendor": EXPORT_VENDOR,
         "exported_at": now,
         "probe": {
-            "status": probe_status(health, now),
-            "last_verified_at": iso_utc(health.get("last_ok_at")),
-            "detectable_now": health.get("detectable_now") or {},
-            "coverage": coverage_sentence(
-                peaks, first_sample_t, plan_type_from_cursor(), sample_counts
-            ),
+            "status": status,
+            "last_verified_at": iso_utc(verified_at),
+            "detectable_now": detectable,
+            "coverage": export_coverage(accounts),
             # Outside the shared contract and not copied onto the site by
             # build.py's whitelist. Kept because this file is also what the
             # owner reads when the probe itself is the thing that is wrong.
             "label": health.get("label", label),
             "last_error": health.get("last_error"),
+            "accounts": {
+                HEALTH_LABELS[account]: {
+                    "status": probe_status(entry, now),
+                    "last_verified_at": iso_utc(entry.get("last_ok_at")),
+                    "last_error": entry.get("last_error"),
+                }
+                for account, entry in entries.items()
+            },
         },
         "observations": observations,
     }
@@ -2316,13 +2645,39 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def second_codex_home(raw: str | None = None) -> str | None:
+    """Account b's Codex home, or None when there is no second account to read.
+
+    Empty means none is configured: the installer leaves it empty on a host
+    with no second home holding an auth.json. A relative path would resolve
+    against whatever directory the unit happens to run in, and account a's own
+    home would read one account twice and call it two, so both are refused,
+    out loud, rather than read.
+    """
+    value = (CODEX_HOME_B if raw is None else raw).strip()
+    if not value:
+        return None
+    home = Path(value).expanduser()
+    if not home.is_absolute():
+        log("CODEX ACCOUNT B IGNORED: AI_RESETS_CODEX_HOME_B is not an absolute path")
+        return None
+    own = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+    if os.path.realpath(home) == os.path.realpath(own):
+        log("CODEX ACCOUNT B IGNORED: AI_RESETS_CODEX_HOME_B is account a's own home")
+        return None
+    return str(home)
+
+
 def poll_once(
     detector: Detector,
     now: int | None = None,
     extra_cursor: dict[str, Any] | None = None,
+    *,
+    account: str = ACCOUNT_LABEL,
+    codex_home: str | None = None,
 ) -> dict[str, Any]:
     now = int(time.time()) if now is None else now
-    rows = normalise(read_rate_limits(), now)
+    rows = normalise(read_rate_limits(codex_home=codex_home), now, account)
     to_write = changed_rows(rows, detector)
 
     events: list[dict[str, Any]] = []
@@ -2368,65 +2723,133 @@ def poll_once(
     }
 
 
+class AccountPoller:
+    """One Codex account's read, failure streak and health block.
+
+    The two accounts fail apart: account b's login can lapse, or its home can
+    go, while account a reads on. One shared streak would report a working
+    account a as blind, and exiting on b's failures would hand systemd a
+    restart that costs account a its polls for a fault only a human can fix
+    in b's home. So b's outage is its own block, `codex:b`, and its own owner
+    alert, and it never ends the process.
+    """
+
+    def __init__(self, account: str, codex_home: str | None = None) -> None:
+        self.account = account
+        self.codex_home = codex_home
+        self.label = HEALTH_LABELS[account]
+        # Account a's journal lines are word for word what they always were.
+        self.tag = "" if account == ACCOUNT_LABEL else f" {self.label}"
+        self.failures = 0
+        self.ok = False
+        self.last_error: str | None = None
+        self.last_ok_at, self.blind_since = resume_health(self.label)
+
+    def poll(self, detector: Detector, extra_cursor: dict[str, Any]) -> None:
+        started = int(time.time())
+        try:
+            summary = poll_once(
+                detector,
+                extra_cursor=extra_cursor,
+                account=self.account,
+                codex_home=self.codex_home,
+            )
+        except ProbeError as exc:
+            self._fail(started, str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 — see below
+            if self.account == ACCOUNT_LABEL:
+                raise
+            # Anything at all on account b's side is b's failure, recorded in
+            # b's block: no fault in the second account's read may take the
+            # first account's down with it.
+            self._fail(started, f"{type(exc).__name__}: {exc}")
+            return
+        self.failures = 0
+        self.ok = True
+        self.last_ok_at = summary["t"]
+        self.blind_since = None
+        self.last_error = None
+        log(
+            f"poll ok{self.tag} sampled={summary['sampled']} "
+            f"written={summary['written']} events={summary['events']}"
+        )
+
+    def _fail(self, started: int, error: str) -> None:
+        self.failures += 1
+        self.ok = False
+        self.last_error = error[:200]
+        if self.blind_since is None:
+            self.blind_since = started
+        # A blind detector is the failure mode that matters: the pipeline
+        # would look healthy while silently detecting nothing. Surface it
+        # loudly so the unit's OnFailure/journal alerting can catch it.
+        log(f"PROBE FAILED{self.tag} ({self.failures} in a row): {error}")
+        if self.failures % BLIND_LOG_EVERY == 0:
+            where = "" if self.account == ACCOUNT_LABEL else f" in account {self.account}'s home"
+            log(
+                f"PROBE BLIND{self.tag}: {self.failures} consecutive failures "
+                f"— check `codex login`{where}"
+            )
+
+    def health(self, detector: Detector) -> dict[str, Any]:
+        return health_block(
+            detector,
+            int(time.time()),
+            last_ok_at=self.last_ok_at,
+            consecutive_failures=self.failures,
+            blind_since=self.blind_since,
+            last_error=self.last_error,
+            label=self.label,
+            account=self.account,
+        )
+
+
+def account_pollers() -> list[AccountPoller]:
+    """Account a always; account b when a second home is configured.
+
+    An account no longer configured keeps no health block behind: its last
+    one would go stale and read as an outage nobody can clear.
+    """
+    pollers = [AccountPoller(ACCOUNT_LABEL)]
+    home_b = second_codex_home()
+    if home_b is None:
+        drop_health(HEALTH_LABELS[SECOND_ACCOUNT_LABEL])
+    else:
+        log(f"reading a second Codex account as {HEALTH_LABELS[SECOND_ACCOUNT_LABEL]}")
+        pollers.append(AccountPoller(SECOND_ACCOUNT_LABEL, home_b))
+    return pollers
+
+
 def run(once: bool, with_upstream: bool) -> int:
     cursor = load_cursor()
     detector = Detector(cursor)
     upstream_sigs: dict[str, str] = cursor.get("upstream_sigs", {})
     last_upstream = 0.0
-    failures = 0
-    ok = False
-    last_ok_at, blind_since = resume_health()
-    last_error: str | None = None
+    pollers = account_pollers()
+    primary = pollers[0]
 
     while True:
         started = time.time()
-        try:
-            summary = poll_once(detector, extra_cursor={"upstream_sigs": upstream_sigs})
-            failures = 0
-            ok = True
-            last_ok_at = summary["t"]
-            blind_since = None
-            last_error = None
-            log(
-                f"poll ok sampled={summary['sampled']} "
-                f"written={summary['written']} events={summary['events']}"
-            )
-        except ProbeError as exc:
-            failures += 1
-            ok = False
-            last_error = str(exc)[:200]
-            if blind_since is None:
-                blind_since = int(started)
-            # A blind detector is the failure mode that matters: the pipeline
-            # would look healthy while silently detecting nothing. Surface it
-            # loudly so the unit's OnFailure/journal alerting can catch it.
-            log(f"PROBE FAILED ({failures} in a row): {exc}")
-            if failures % BLIND_LOG_EVERY == 0:
-                log(
-                    f"PROBE BLIND: {failures} consecutive failures "
-                    "— check `codex login`"
-                )
+        for poller in pollers:
+            # In order, each persisted before the next is read: account b's
+            # read can run to its full RPC timeout, and nothing on b's side may
+            # delay or lose account a's sample.
+            poller.poll(detector, {"upstream_sigs": upstream_sigs})
 
-        # Every iteration, success or failure: this file IS the heartbeat.
-        write_health(
-            health_block(
-                detector,
-                int(time.time()),
-                last_ok_at=last_ok_at,
-                consecutive_failures=failures,
-                blind_since=blind_since,
-                last_error=last_error,
-            )
-        )
+        for poller in pollers:
+            # Every iteration, success or failure: this file IS the heartbeat.
+            write_health(poller.health(detector), poller.label)
 
-        if failures >= BLIND_EXIT_FAILURES:
+        if primary.failures >= BLIND_EXIT_FAILURES:
             # Staying up while blind is what let the 2026-09-03 outage run 35
             # polls unnoticed. Exiting hands the problem to systemd, whose
             # Restart=always/RestartSec=10 re-tries with a clean process and
-            # whose OnFailure= can mail the owner.
+            # whose OnFailure= can mail the owner. Account a's streak only:
+            # see AccountPoller for why account b's never exits.
             log(
-                f"PROBE EXITING: {failures} consecutive failures "
-                f"since {blind_since} — restarting under systemd"
+                f"PROBE EXITING: {primary.failures} consecutive failures "
+                f"since {primary.blind_since} — restarting under systemd"
             )
             sys.exit(2)
 
@@ -2437,10 +2860,34 @@ def run(once: bool, with_upstream: bool) -> int:
             last_upstream = started
 
         if once:
-            # Exit non-zero on a failed poll so a smoke test cannot pass on a
-            # probe that never actually read anything.
-            return 0 if ok else 1
+            # Exit non-zero when any configured account failed to read, so a
+            # smoke test cannot pass on an account that never actually read.
+            return 0 if all(poller.ok for poller in pollers) else 1
         time.sleep(max(1.0, POLL_SECONDS - (time.time() - started)))
+
+
+def show() -> int:
+    """Print what each account's read says right now, and record nothing.
+
+    With one account, the rows themselves, as this always printed. With two,
+    one entry per health label, an account that cannot be read named with its
+    error rather than stopping the other's output.
+    """
+    now = int(time.time())
+    home_b = second_codex_home()
+    if home_b is None:
+        print(json.dumps(normalise(read_rate_limits(), now), indent=2))
+        return 0
+    snapshot: dict[str, Any] = {}
+    for account, home in ((ACCOUNT_LABEL, None), (SECOND_ACCOUNT_LABEL, home_b)):
+        try:
+            snapshot[HEALTH_LABELS[account]] = normalise(
+                read_rate_limits(codex_home=home), now, account
+            )
+        except ProbeError as exc:
+            snapshot[HEALTH_LABELS[account]] = {"error": str(exc)}
+    print(json.dumps(snapshot, indent=2))
+    return 0 if all(isinstance(rows, list) for rows in snapshot.values()) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2474,9 +2921,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     if args.show:
-        now = int(time.time())
-        print(json.dumps(normalise(read_rate_limits(), now), indent=2))
-        return 0
+        return show()
 
     return run(once=args.once, with_upstream=not args.no_upstream)
 

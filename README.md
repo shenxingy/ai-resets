@@ -119,8 +119,8 @@ scripts/
   fetch_openai.py     pulls a public reset-tracking API
   fetch_anthropic.py  pulls a public reset-tracking site, verifies each post
   discover_posts.py   announcement discovery
-  quota_probe.py      ground truth: this account's own Codex quota
-  claude_probe.py     ground truth: this account's own Claude quota
+  quota_probe.py      ground truth: our two Codex accounts' own quota
+  claude_probe.py     ground truth: our two Claude accounts' own quota
   antigravity_probe.py  ground truth for Google (needs one interactive login)
   attribution.py      the two-account rule: when a clear is the vendor's
   groundtruth.py      joins observations to announcements
@@ -191,7 +191,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 
 `install-units.sh` derives the user, the repository path, the Codex binary and
-the credential paths from the host it runs on. Override any of them by
+homes, and the credential paths from the host it runs on. Override any of them by
 exporting the matching variable first; `--show` prints what it resolved.
 
 A cron entry refreshes the site every five minutes. `flock` prevents
@@ -210,6 +210,11 @@ good data, stamps the source as stale, prints one line and exits 0.
 `quota_samples.jsonl`, `quota_events.jsonl` and `upstream_snapshots.jsonl`
 under its systemd `StateDirectory`. It shells out to the Codex CLI, so that
 binary must exist; `install-units.sh --show` reports whether it found one.
+It also reads a second Codex account, the witness the two-account rule needs,
+when `AI_RESETS_CODEX_HOME_B` names its home: the installer defaults it to
+`~/.codex-profiles/main1` when that home holds an `auth.json`, and exporting
+it empty turns the second account off. Its rows carry a `b:` prefix and its
+health block is `codex:b` ([docs/reset-attribution.md](docs/reset-attribution.md)).
 
 ### The Claude probe
 

@@ -31,9 +31,11 @@ from typing import Any
 from scripts import attribution, incidents
 from scripts.timefmt import describe_age, format_epoch_pacific
 from scripts.quota_probe import (
+    ACCOUNT_LABEL,
     VERDICT_CREDIT_GRANTED,
     VERDICT_LIMIT_CHANGE,
     VERDICT_OF_CLASS,
+    record_account,
     window_name,
 )
 
@@ -625,7 +627,10 @@ def credit_grant_since(
 
     The log is append-only and small (one line per event, not per sample), so
     it is read whole. Grants are emitted once per limit window, so the
-    earliest matching record is the grant.
+    earliest matching record is the grant. Account a's only: the sentence
+    this feeds names "our Pro account" and quotes a's weekly window and bank
+    beside it, and account b's grant into its own bank would put the second
+    account's numbers under the first account's name.
     """
     if since is None:
         return None
@@ -639,6 +644,8 @@ def credit_grant_since(
                 except json.JSONDecodeError:
                     continue
                 if not isinstance(event, dict) or event.get("kind") != "credit_granted":
+                    continue
+                if record_account(event) != ACCOUNT_LABEL:
                     continue
                 moment = event.get("t")
                 if not isinstance(moment, int) or moment < since:

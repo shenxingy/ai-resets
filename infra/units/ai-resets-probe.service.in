@@ -23,6 +23,12 @@ Environment=AI_RESETS_CODEX_BIN=__CODEX_BIN__
 # below would punch through a directory the process never uses while the one
 # it does write stays read-only. Binary, home, and writable path must agree.
 Environment=CODEX_HOME=__CODEX_HOME__
+# The second Codex account, read as account b (docs/reset-attribution.md,
+# "Second Codex account"). The probe sets this home in the child it starts for
+# b and never in its own environment, so it cannot move account a. The
+# installer renders this line and b's ReadWritePaths below only when it
+# resolved a second home; with none, both are left out.
+Environment=AI_RESETS_CODEX_HOME_B=__CODEX_HOME_B__
 ExecStart=/usr/bin/python3 __AI_RESETS_REPO__/scripts/quota_probe.py
 Restart=always
 RestartSec=10
@@ -32,11 +38,15 @@ StateDirectoryMode=0700
 UMask=0077
 
 # The probe shells out to the Codex CLI, which writes sessions and cache into
-# ~/.codex. ProtectHome=read-only alone makes app-server hang until the RPC
+# its home. ProtectHome=read-only alone makes app-server hang until the RPC
 # times out (bisected against the other five properties, which are all
-# harmless), so home stays read-only with exactly that one directory punched
+# harmless), so home stays read-only with exactly the Codex homes punched
 # through. No credential is read by this process itself.
 ReadWritePaths=__CODEX_HOME__
+# Account b's home, `-`-prefixed: a second home that has gone missing is
+# skipped instead of stopping the unit, and with it account a's reads. The
+# probe then reports b blind on its own health block.
+ReadWritePaths=-__CODEX_HOME_B__
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true

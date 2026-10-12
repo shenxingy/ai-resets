@@ -74,11 +74,16 @@ def fp(namespace, raw):
 
 @contextlib.contextmanager
 def temp_state():
-    """Point every STATE_DIR path at a throwaway directory."""
-    originals = {name: getattr(qp, name) for name in STATE_FILES}
+    """Point every STATE_DIR path at a throwaway directory.
+
+    Also unsets the second Codex account: a shell that exports
+    AI_RESETS_CODEX_HOME_B must not make run() spawn a real codex for it.
+    """
+    originals = {name: getattr(qp, name) for name in (*STATE_FILES, "CODEX_HOME_B")}
     with tempfile.TemporaryDirectory() as tmp:
         for name, filename in STATE_FILES.items():
             setattr(qp, name, Path(tmp) / filename)
+        qp.CODEX_HOME_B = ""
         try:
             yield Path(tmp)
         finally:

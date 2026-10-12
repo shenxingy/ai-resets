@@ -437,8 +437,10 @@ def is_reviewed_announcer(handle: Any) -> bool:
 # claude-resets.com rows ("affected users", 2067802163498352929).
 
 # What the probed accounts actually hold. Claude: account b on Max, and account
-# a on a Team org since its 2026-10-11 21:03 UTC login. Codex: Pro.
-OUR_PLANS = frozenset({"max", "pro", "team"})
+# a on a Team org since its 2026-10-11 21:03 UTC login. Codex: account a on
+# Pro, account b on Pro Lite (planType `prolite`; "Pro Lite" written apart
+# already matches `pro`).
+OUR_PLANS = frozenset({"max", "pro", "prolite", "team"})
 
 # Checked FIRST: a scope naming a fraction of the user base tells us nothing
 # about whether this account was in it, so it can never be read as "not seen".

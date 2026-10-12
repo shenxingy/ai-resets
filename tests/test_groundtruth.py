@@ -488,6 +488,23 @@ class BankedForecastTests(StateDirCase):
         )
         self.assertIsNotNone(credit_grant_since(self.ANNOUNCED, self.state))
 
+    def test_the_second_account_s_grant_is_not_account_a_s_landing(self):
+        # The sentence names "our Pro account" and quotes account a's bank and
+        # weekly window, so account b's grant, however early, cannot be it.
+        b_grant = {**self.GRANT, "event_id": "b:codex/10080:credit:1",
+                   "slot": "b:codex/10080", "account": "b", "t": NOW - 3000}
+        self.write_events([b_grant])
+        self.assertIsNone(credit_grant_since(self.ANNOUNCED, self.state))
+        result = self.line(is_forecast=True, kind="banked", announced_at=self.ANNOUNCED)
+        self.assertFalse(result.get("landed"))
+        self.write_events([b_grant, {**self.GRANT, "account": "a"}])
+        self.assertEqual(credit_grant_since(self.ANNOUNCED, self.state)["t"], NOW - 1800)
+
+    def test_an_unlabelled_grant_on_a_second_account_slot_is_still_b_s(self):
+        # Labels arrived after the log began; the slot key always said whose.
+        self.write_events([{**self.GRANT, "slot": "b:codex/10080"}])
+        self.assertIsNone(credit_grant_since(self.ANNOUNCED, self.state))
+
 
 if __name__ == "__main__":
     unittest.main()

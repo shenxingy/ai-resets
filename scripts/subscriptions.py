@@ -2087,33 +2087,36 @@ def health_conditions(
     elif status["status"] == "token_stale":
         conditions["probe:codex:token"] = "The Codex probe's credential is stale; it cannot read the quota."
 
-    # The Claude probe carries one health block per account, and each block
-    # can page the owner. Token staleness gets a grace period, unlike the
-    # Codex one: an OAuth expiry heals itself the next time that profile is
-    # used, so alerting the moment `expiresAt` passes would page the owner
-    # about a state their own editor is about to fix. Thirty minutes stale
-    # means nobody is coming. A label with no block at all is NOT a
-    # condition: it means the probe never ran here, and its total death is
-    # caught within 15 minutes by the block going stale (blind) instead.
-    for label in ("claude:a", "claude:b"):
+    # Every further account block can page the owner the same way: the Claude
+    # probe's two accounts, and the Codex probe's second account, `codex:b`
+    # (account a's stays the `codex` block above). Token staleness gets a
+    # grace period, unlike the Codex one: an OAuth expiry heals itself the
+    # next time that profile is used, so alerting the moment `expiresAt`
+    # passes would page the owner about a state their own editor is about to
+    # fix. Thirty minutes stale means nobody is coming. A label with no block
+    # at all is NOT a condition: it means that account is not read here (the
+    # Codex probe drops `codex:b` when no second home is configured), and a
+    # running probe's total death is caught within 15 minutes by the block
+    # going stale (blind) instead.
+    for label, product in (("claude:a", "Claude"), ("claude:b", "Claude"), ("codex:b", "Codex")):
         account = label.rsplit(":", 1)[-1]
-        claude = probe_status(health, label, now)
-        age = stale_age_line(claude)
-        if claude["status"] == "blind":
+        reading = probe_status(health, label, now)
+        age = stale_age_line(reading)
+        if reading["status"] == "blind":
             conditions[f"probe:{label}:blind"] = (
-                f"The Claude probe has not read account {account} for {age} "
-                f"({claude.get('consecutive_failures') or 0} consecutive failures)."
+                f"The {product} probe has not read account {account} for {age} "
+                f"({reading.get('consecutive_failures') or 0} consecutive failures)."
             )
-        elif claude["status"] == "throttled":
+        elif reading["status"] == "throttled":
             conditions[f"probe:{label}:throttled"] = (
-                f"The Claude probe is throttled on account {account} "
+                f"The {product} probe is throttled on account {account} "
                 f"({age} since its last read)."
             )
-        elif claude["status"] == "token_stale":
-            last_ok = claude.get("last_ok_at")
+        elif reading["status"] == "token_stale":
+            last_ok = reading.get("last_ok_at")
             if not isinstance(last_ok, (int, float)) or now - int(last_ok) > TOKEN_STALE_ALERT_SECONDS:
                 conditions[f"probe:{label}:token"] = (
-                    f"The Claude probe's credential for account {account} has "
+                    f"The {product} probe's credential for account {account} has "
                     f"been stale for {age}. It refreshes the next time that "
                     "profile is used; nothing here may refresh it."
                 )

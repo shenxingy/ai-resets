@@ -308,6 +308,81 @@ class TwoAccountFlowTests(FlowCase):
         self.assertEqual(self.mails(), [])
 
 
+class CodexTwoAccountFlowTests(FlowCase):
+    """Case (a) for Codex: both of our Codex accounts, read as the probe reads them.
+
+    The rows come through quota_probe.normalise for account a and account b
+    (the second Codex home, `b:`-prefixed) into ONE detector, exactly as the
+    probe's poll loop feeds them, so the pairing is proven on the ids and
+    labels the probe really writes rather than on hand-made records.
+    """
+
+    def setUp(self):
+        super().setUp()
+        health = json.loads((self.state / "probe_health.json").read_text())
+        health["codex:b"] = {**health["codex"], "label": "codex:b"}
+        (self.state / "probe_health.json").write_text(json.dumps(health))
+
+    def codex_pair_polls(self, before=(80, 60)):
+        detector, events = qp.Detector(), []
+        accounts = (("a", "placeholder-account-a", "pro", 0), ("b", "placeholder-account-b", "prolite", 5))
+        for i in range(3):
+            for (account, account_id, plan, offset), level in zip(accounts, before):
+                moment = T0 + 60 * i + offset
+                result = {
+                    "accountId": account_id,
+                    "rateLimitsByLimitId": {"codex": {
+                        "limitId": "codex", "planType": plan, "secondary": None,
+                        "primary": {
+                            "usedPercent": level if i == 0 else 0, "windowDurationMins": 10080,
+                            "resetsAt": T0 + 3 * DAY if i == 0 else moment + 7 * DAY,
+                        },
+                    }},
+                    "rateLimitResetCredits": {"availableCount": 0, "credits": []},
+                }
+                for row in qp.normalise(result, moment, account):
+                    events += detector.observe(row)
+        return events
+
+    def test_a_clear_on_both_codex_accounts_is_one_held_mail(self):
+        events = self.codex_pair_polls()
+        self.assertEqual(
+            sorted((e["account"], e["slot"]) for e in events),
+            [("a", "codex/10080"), ("b", "b:codex/10080")],
+        )
+        self.export("openai", events)
+        key = probe_incident_key("openai", "weekly", T0)
+        pending = self.build(T0 + 65 + 60)
+        rows = self.observations(pending, "openai")
+        self.assertEqual([r["verdict"] for r in rows], ["vendor_reset", "vendor_reset"])
+        lead = next(r for r in rows if "status" in r)
+        self.assertEqual((lead["status"], lead["incident_key"]), ("observed_pending", key))
+        self.assertEqual(lead["accounts"], ["a", "b"])
+        self.notify(T0 + 65 + 60)
+        self.assertEqual(self.mails(), [])
+
+        self.build(T0 + 65 + HOLD)
+        self.notify(T0 + 65 + HOLD)
+        mails = self.mails()
+        self.assertEqual(len(mails), 2)
+        self.assertEqual(
+            mails[0]["subject"],
+            "Codex: weekly limits reset on two of our accounts — not announced yet",
+        )
+        body = mails[0]["text_body"]
+        self.assertIn("Seen on two of our Codex accounts before anyone announced it: account a", body)
+        self.assertIn("and account b", body)
+        self.assertIn("No banked credit was spent and the account did not change.", body)
+        self.assertEqual({k for k, *_ in self.deliveries()}, {key})
+
+    def test_both_codex_accounts_at_their_limit_stay_private(self):
+        self.export("openai", self.codex_pair_polls(before=(97, 100)))
+        data = self.build(T0 + 65 + HOLD)
+        self.assertEqual(self.observations(data, "openai"), [])
+        self.notify(T0 + 65 + HOLD)
+        self.assertEqual(self.mails(), [])
+
+
 class SingleAccountFlowTests(FlowCase):
     def test_c_one_codex_account_confirms_the_post_that_follows(self):
         self.export("openai", self.codex_polls())

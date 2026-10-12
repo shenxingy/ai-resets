@@ -345,6 +345,14 @@ class ScopeTests(unittest.TestCase):
             with self.subTest(scope=scope):
                 self.assertTrue(scope_covers_us(scope))
 
+    def test_pro_lite_is_ours_since_the_second_codex_account_is_read(self):
+        # Codex account b is on Pro Lite (planType `prolite`). Written apart,
+        # "Pro Lite" already matches `pro`; run together, only `prolite` does,
+        # and without it "Plus" would carry the post out of scope.
+        for scope in ("Plus and ProLite", "all prolite users", "Plus and Pro Lite"):
+            with self.subTest(scope=scope):
+                self.assertTrue(scope_covers_us(scope))
+
     def test_a_plan_of_ours_inside_a_longer_list_still_counts(self):
         self.assertTrue(scope_covers_us("all Plus, Pro and Business users"))
         self.assertTrue(scope_covers_us("Pro, Max, Team and seat-based Enterprise"))
