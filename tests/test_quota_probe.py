@@ -1608,6 +1608,42 @@ class AccountChangeTest(unittest.TestCase):
         clear = d.observe(held(300, 0, 300 + WEEK_SECONDS, credits=0, ids=[], account_fp=FP_B))[0]
         self.assertEqual(clear["classification"], qp.CLASS_UNATTRIBUTED)
 
+    def test_a_switch_to_a_fuller_bank_is_not_a_credit_grant(self):
+        # The old account's 0 is not a bank the new account's 2 grew from: a
+        # grant here would be filed as account a's banked credit landing
+        # (groundtruth.credit_grant_since).
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000, credits=0, ids=[]))
+        events = d.observe(held(60, 50, 1_000_000, credits=2, ids=[CREDIT_1, CREDIT_2],
+                                account_fp=FP_B))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        state = d.slots["codex/10080"]
+        self.assertEqual(state["credits_known"], {"value": 2, "t": 60})
+        self.assertEqual(state["credit_ids_known"], [CREDIT_1, CREDIT_2])
+        # ...and a grant on the NEW account is still seen.
+        events = d.observe(held(120, 50, 1_000_000, credits=3, ids=[CREDIT_1, CREDIT_2],
+                                account_fp=FP_B))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_CREDIT_GRANTED])
+        self.assertEqual(events[0]["credits_before"], 2)
+
+    def test_a_switch_read_without_a_bank_keeps_nothing_of_the_old_one(self):
+        # The new account's first row cannot read its bank, so nothing it
+        # carries can overwrite the old account's credit state: rebaseline()
+        # alone must drop it, or a None reading would fall back to the OLD
+        # account's count and itemisation.
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000, credits=2, ids=[CREDIT_1, CREDIT_2]))
+        d.observe(held(60, 50, 1_000_000, credits=None, ids=None))
+        d.observe(held(120, 50, 1_000_000, credits=None, ids=None))
+        events = d.observe(held(180, 50, 2_000_000, credits=None, ids=None, account_fp=FP_B))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        state = d.slots["codex/10080"]
+        self.assertNotIn("credits_known", state)
+        self.assertNotIn("credit_ids_known", state)
+        self.assertNotIn("credit_trail", state)
+        # This row's own absence, not the old account's streak plus one.
+        self.assertEqual(state["credits_absent"], 1)
+
     def test_a_switch_seen_through_an_unread_row_is_still_a_switch(self):
         d = qp.Detector()
         d.observe(held(0, 50, 1_000_000))
