@@ -232,6 +232,12 @@ A probe-first incident (no announcement) can only start from `vendor_reset`:
     `scripts/check_site.py` fails the publish if it carries anything else.
     The correction mail is written from the notifier's own record and the raw
     log, never from this row.
+  - **Its key** is the post's when a trusted post took the pair over, else
+    the probe key. The notifier never reads a retracted row as a rename, and
+    corrects under the incident it filed the pair row under: subscribers
+    when that is the probe-first incident, one owner alert when a post holds
+    it (the post's own `reverted_on_our_account` raises the same alert, not a
+    second one).
 
 An `unattributed` clear with no witness never becomes public and never mails.
 Nothing alerts the owner for `observed_pending` or for an account change; both

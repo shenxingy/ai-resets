@@ -1143,6 +1143,20 @@ class IncidentKeyTests(unittest.TestCase):
         # A key we have never filed anything under is not a rename.
         self.assertEqual(plan_adoptions(stated, {}, set()), ())
 
+    def test_a_correction_never_moves_an_incident(self):
+        # Review case [09]: a withdrawn row reuses the event key of the pair
+        # row it withdraws. Read as a rename, it filed the post's incident
+        # back under the probe key, and the post's own row filed it forward
+        # again, on every tick.
+        stored = {"openai:obs-1": "openai:post", "openai:post": "openai:post"}
+        known = {"openai:post", "openai:probe-weekly-100"}
+        for status in ("retracted", " Retracted "):
+            with self.subTest(status=status):
+                withdrawn = [{"event_key": "openai:obs-1", "vendor": "openai", "status": status,
+                              "incident_key": "openai:probe-weekly-100",
+                              "merged_from": "openai:post"}]
+                self.assertEqual(plan_adoptions(withdrawn, stored, known), ())
+
     def test_only_new_is_mandatory_in_the_stages_preference(self):
         self.assertEqual(normalize_stages("new,confirmed"), (STAGE_NEW, STAGE_CONFIRMED))
         self.assertEqual(normalize_stages([]), (STAGE_NEW,))

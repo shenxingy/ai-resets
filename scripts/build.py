@@ -1106,6 +1106,13 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             clear["key"] for _, members in withdrawn for clear in members
         )
         claimed = {}
+        # A withdrawn pair's correction is owed under the incident it was
+        # filed under. A post that took the pair over while it stood wears
+        # its key, and so must the correction: stated under the probe key
+        # instead, the notifier renamed the post's incident back to the probe
+        # key and forward again on every tick, and opened a second owner
+        # alert for the one reversion (review case [09]).
+        withdrawn_claims = {}
         for event in events:
             match = match_observation(event, clears, withdrawn_keys)
             trusted = incidents.is_trusted_announcement(event)
@@ -1124,7 +1131,18 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             stable_id = str(event.get("id") or "").strip()
             if stable_id:
                 event["incident_key"] = f"{key}:{stable_id}"
-            if not (trusted and stable_id) or event["status"] != incidents.STATUS_CONFIRMED:
+            if not (trusted and stable_id):
+                continue
+            if event["status"] in (incidents.STATUS_CONFIRMED, incidents.STATUS_REVERTED):
+                # Confirmed by the pair while it stood: reverted now if the
+                # withdrawn half was what confirmed it, still confirmed if
+                # standing evidence does.
+                for incident, members in withdrawn:
+                    if incident not in withdrawn_claims and confirmed_by(
+                        event, members, withdrawn_keys
+                    ):
+                        withdrawn_claims[incident] = event["incident_key"]
+            if event["status"] != incidents.STATUS_CONFIRMED:
                 # Only a post the pair actually CONFIRMS may take it over. A
                 # pair handed to a post that ends up reverted, historical or
                 # merely announced loses its own status row and mails as
@@ -1199,7 +1217,7 @@ def fuse_incidents(vendors, state_dir=None, now=None):
             # check_site.WITHDRAWN_FIELDS holds the published row to exactly
             # these keys.
             vendor.setdefault("observations", []).append({
-                "incident_key": incident,
+                "incident_key": withdrawn_claims.get(incident, incident),
                 "event_id": published_id(members[0]["key"]),
                 "status": incidents.STATUS_RETRACTED,
                 "verdict": None,

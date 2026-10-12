@@ -424,6 +424,12 @@ def plan_adoptions(
     """
     renames: dict[str, str] = {}
     for event in events:
+        if str(event.get("status") or "").strip().lower() == STATUS_RETRACTED:
+            # A correction names the incident it corrects; it never moves one.
+            # It reuses the event key of the pair row it withdraws, so reading
+            # it as a rename filed the incident back and forth between the
+            # probe key and the post key on every tick (review case [09]).
+            continue
         new_key = incident_key(event)
         candidates = (
             str(event.get("merged_from") or ""),
@@ -2201,7 +2207,18 @@ def plan_retractions(
     """
     queued: list[tuple[str, str]] = []
     conditions: dict[str, str] = {}
-    for key, event in feed_incidents_with_status(events, STATUS_RETRACTED).items():
+    # A withdrawn row reuses the event key of the pair row it withdraws, so
+    # this store already knows which incident that pair was filed under: the
+    # probe key it was mailed under, or the post's key once a post took it
+    # over. That record decides, not the key the feed states, which is only
+    # build's inference and cannot know whether the rename ever happened.
+    stored = store.stored_incidents()
+    withdrawn = {
+        stored.get(str(event.get("event_key") or "")) or incident_key(event)
+        for event in events
+        if str(event.get("status") or "").strip().lower() == STATUS_RETRACTED
+    }
+    for key in sorted(withdrawn):
         if ORIGIN_ANNOUNCEMENT in store.incident_origins(key):
             conditions[f"incident:reverted:{key}"] = (
                 f"{key} was retracted on our own account, but the incident is "

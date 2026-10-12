@@ -391,6 +391,71 @@ class CodexTwoAccountFlowTests(FlowCase):
         self.assertIn("No banked credit was spent and the account did not change.", body)
         self.assertEqual({k for k, *_ in self.deliveries()}, {key})
 
+    def retract(self, events, account, at):
+        target = next(e for e in events if e.get("account") == account and e.get("kind") == "clear")
+        return events + [{"kind": "retraction", "event_id": target["event_id"],
+                          "slot": target["slot"], "account": account,
+                          "reverted_at": at, "used_at_revert": 60.0}]
+
+    def ticks(self, start, count=4):
+        """Build and notify `count` times, five minutes apart; the ADOPTED lines."""
+        adopted = []
+        for k in range(count):
+            now = start + 300 * k
+            self.build(now)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                run_notifier(self.config, self.app, now=now)
+            adopted += [line for line in out.getvalue().splitlines() if line.startswith("ADOPTED")]
+        return adopted
+
+    def test_a_retraction_after_a_post_took_the_pair_over_is_one_owner_alert(self):
+        # Review case [09]: the pair was mailed as probe-first, a trusted post
+        # then took it over (one rename), and account b's half was withdrawn.
+        # The correction row stated the probe key under the pair row's own
+        # event key, so every tick renamed post -> probe -> post, and two
+        # owner alerts opened for one reversion.
+        events = self.codex_pair_polls()
+        probe_key = probe_incident_key("openai", "weekly", T0)
+        post_key = "openai:2109132167112782291"
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD)
+        self.notify(T0 + 65 + HOLD)
+        self.assertEqual({key for key, *_ in self.deliveries()}, {probe_key})
+        self.posts["openai"] = [trusted_post("2109132167112782291", T0 + 1800, vendor="openai",
+                                             text="Reset all propagated.", announcer="thsottiaux")]
+        self.assertEqual(self.ticks(T0 + 65 + HOLD + 300, count=1),
+                         [f"ADOPTED {probe_key} -> {post_key}"])
+
+        self.export("openai", self.retract(events, "b", T0 + 9000))
+        data = self.build(T0 + 9100)
+        (row,) = self.observations(data, "openai")
+        self.assertEqual((row["status"], row["incident_key"]), ("retracted", post_key))
+        self.assertEqual(self.ticks(T0 + 9100), [])
+        self.assertEqual({key for key, *_ in self.deliveries()}, {post_key})
+        self.assertEqual(self.store.open_alert_conditions(), {f"incident:reverted:{post_key}"})
+        self.assertEqual(len(self.mails()), 2)
+
+    def test_a_post_that_arrives_after_the_withdrawal_does_not_cancel_the_correction(self):
+        # The feed can name a post as the claimant of a pair the post never
+        # actually took over; the notifier's own record of where it filed the
+        # pair decides who is owed the correction.
+        events = self.codex_pair_polls()
+        self.export("openai", events)
+        self.build(T0 + 65 + HOLD)
+        self.notify(T0 + 65 + HOLD)
+        self.export("openai", self.retract(events, "b", T0 + 9000))
+        self.posts["openai"] = [trusted_post("2109132167112782291", T0 + 1800, vendor="openai",
+                                             text="Reset all propagated.", announcer="thsottiaux")]
+        data = self.build(T0 + 9100)
+        self.assertEqual(
+            [r["incident_key"] for r in self.observations(data, "openai")],
+            ["openai:2109132167112782291"],
+        )
+        self.ticks(T0 + 9100, count=2)
+        corrections = [m for m in self.mails() if "withdrawing" in m["subject"]]
+        self.assertEqual(len(corrections), 2)
+
     def test_a_clear_withdrawn_before_the_other_account_cleared_is_nothing_public(self):
         # Privacy review, RetractedBeforeWitness, through the real detector
         # and exporter: account a clears and is taken back at T0+300, and
