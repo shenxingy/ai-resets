@@ -1685,6 +1685,19 @@ class AccountChangeTest(unittest.TestCase):
         self.assertEqual(events[0]["kind"], qp.EVENT_ACCOUNT_CHANGE)
         self.assertEqual(events[0]["account_fp_before"], FP_A)
 
+    def test_a_plan_switch_seen_through_an_unread_plan_is_still_a_switch(self):
+        # The plan twin of the case above, on one fingerprint: the 2026-09-19
+        # pro -> prolite switch read through a poll whose plan was unread.
+        # Compared with the adjacent row only, None -> prolite is "unread"
+        # and the switch would pass with no re-baseline.
+        d = qp.Detector()
+        d.observe(held(0, 50, 1_000_000, plan="pro"))
+        self.assertEqual(d.observe(held(60, 50, 1_000_000, plan=None)), [])
+        events = d.observe(held(120, 50, 1_000_000, plan="prolite"))
+        self.assertEqual([e["kind"] for e in events], [qp.EVENT_ACCOUNT_CHANGE])
+        self.assertEqual((events[0]["plan_before"], events[0]["plan_after"]), ("pro", "prolite"))
+        self.assertEqual(events[0]["checks"], {"identity": "same", "plan": "changed"})
+
     def test_an_unreadable_identity_is_never_a_switch(self):
         d = qp.Detector()
         rows = [held(0, 50, 1_000_000), held(60, 50, 1_000_000, account_fp=None, plan=None),
