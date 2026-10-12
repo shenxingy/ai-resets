@@ -19,7 +19,7 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts import incidents
+from scripts import build, incidents
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -170,6 +170,18 @@ class MethodologyTests(unittest.TestCase):
         # The answer search engines show is the answer on the page: two copies
         # of one claim are how one of them kept "two Codex accounts".
         self.assertEqual(json_ld_faq(self.page), visible_faq(self.page))
+
+    def test_the_seen_line_it_quotes_is_the_one_the_page_draws(self):
+        # The page promised "marked as seen on our account, with the time"
+        # while neither renderer drew it; now that both do, the quote is the
+        # renderer's own output, so a reworded line fails here first.
+        line = build.seen_line({
+            "observed": {"status": "confirmed", "verdict": "unattributed",
+                         "accounts": ["a"], "lead_minutes": 2},
+        })
+        self.assertTrue(line)
+        self.assertTrue(line in self.text, f"the methodology does not quote {line!r}")
+        self.assertTrue(line in flat(read("README.md")), f"README.md does not quote {line!r}")
 
 
 if __name__ == "__main__":

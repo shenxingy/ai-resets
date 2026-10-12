@@ -206,6 +206,11 @@ An `unattributed` clear becomes the VENDOR's in exactly two ways:
   what the probe checked.
   - The observation row itself stays private: a single account is shown only
     as the timing of a reset the vendor announced.
+  - **On the page:** both renderers draw one line under the post, built from
+    the annotation's labels, minutes and verdict and nothing else: "Seen on
+    our account 2 min before this post", or "Seen on two of our accounts …"
+    when a pair confirms it (`build.seen_line()`, and `seenLine()` in
+    `site/app.js`). No id, time of day or level reaches the markup.
   - A post with no label never takes a single account's word.
   - A Claude clear can be blocked here. If the other Claude account was
     readable and had not cleared (`accounts_disagree`), the clear confirms

@@ -90,13 +90,14 @@ only with a **second witness**:
   checks; or
 - **a trusted vendor post** saying the reset already happened, posted between
   one hour before and three hours after the clear. The post is marked
-  confirmed. The single account's clear stays private.
+  confirmed, and the page draws one line under it, "Seen on our account 2 min
+  before this post". The single account's clear stays private.
 
 | Verdict | Meaning | Published |
 |---|---|---|
 | `natural_expiry` | Cleared at its scheduled expiry | yes |
 | `vendor_reset` | Two of our accounts cleared the same primary weekly window early within an hour, each `unattributed`, not both at 95% or more | yes, beside its witness |
-| `unattributed` | Cleared early, with every own-cause the probe can see checked and excluded | **no** |
+| `unattributed` | Cleared early, with every own-cause the probe can see checked and excluded | **no**, only as the timing on a post it confirms |
 | `account_change` | The account or plan differs across the clear; not a reset | **no** |
 | `self_applied` | A banked credit left (Codex), or the Claude Code reset menu was opened in the hour before (Claude) | **no** |
 | `unresolved` | Cleared early but a check could not run, or no expiry anchor on record | **no** |
